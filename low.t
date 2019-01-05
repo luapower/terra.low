@@ -36,9 +36,9 @@ package.path = package.path .. P'$L/bin/$P/lua/?.lua;$L/?.lua;$L/?/init.lua'
 package.cpath = package.cpath .. P';$L/bin/mingw64/clib/?.dll'
 package.terrapath = package.terrapath .. P'$L/?.t;$L/?/init.t'
 
-low.header_loaders = {}
+low.include_loaders = {}
 
-function low.header_loaders.freetype(header)
+function low.include_loaders.freetype(header)
 	local header = header:match'^freetype/(.*)'
 	if header then
 		return terralib.includecstring([[
@@ -56,9 +56,9 @@ low.C = setmetatable({}, {__index = low}) --usage: setfenv(1, low.C)
 local includec = glue.memoize(function(header)
 	return terralib.includec(header)
 end)
-function low.header(header)
+function low.include(header)
 	local C
-	for _,loader in pairs(low.header_loaders) do
+	for _,loader in pairs(low.include_loaders) do
 		C = loader(header)
 		if C then break end
 	end
@@ -73,8 +73,8 @@ end
 --includes -------------------------------------------------------------------
 
 setfenv(1, low.C)
-low.header'stdio.h'
-low.header'stdlib.h'
+include'stdio.h'
+include'stdlib.h'
 
 --assert ---------------------------------------------------------------------
 
