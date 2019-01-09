@@ -93,6 +93,15 @@ stderr = macro(function()
 	end
 end)
 
+prf = macro(function(...)
+	local args = {...}
+	return quote
+		var stdout = stdout()
+		fprintf(stdout, [args])
+		fflush(stdout)
+	end
+end)
+
 pr = macro(function(...)
 	local args = {}
 	local fmt = {}
