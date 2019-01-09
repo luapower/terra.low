@@ -25,12 +25,13 @@ end)
 low.min = macro(function(a, b) return `iif(a < b, a, b) end)
 low.max = macro(function(a, b) return `iif(a > b, a, b) end)
 
---compiler -------------------------------------------------------------------
+--C include system -----------------------------------------------------------
 
+low[ffi.os] = true --enable `if Windows then` in both Terra and Lua contexts.
 local platos = {Windows = 'mingw', Linux = 'linux', OSX = 'osx'}
-low.platform = platos[ffi.os]..(ffi.abi'32bit' and '32' or '64')
+local lp_platform = platos[ffi.os]..'64'
 
-low.paths = {L = '.', P = low.platform}
+low.paths = {L = '.', P = lp_platform}
 local function P(s) return s:gsub('$(%a)', low.paths) end
 
 package.path = package.path .. P'$L/bin/$P/lua/?.lua;$L/?.lua;$L/?/init.lua'
@@ -69,29 +70,40 @@ function low.link(lib)
 	terralib.linklibrary(P(lib))
 end
 
---includes -------------------------------------------------------------------
+--stdlib dependencies --------------------------------------------------------
 
 include'stdio.h'
 include'stdlib.h'
 include'string.h'
 
---print ----------------------------------------------------------------------
+--stdin/out/err --------------------------------------------------------------
 
+local _stdin  = global(&_iobuf, nil)
 local _stdout = global(&_iobuf, nil)
 local _stderr = global(&_iobuf, nil)
+local fdopen = Windows and _fdopen or fdopen
 
+--exposed as macros so that they can be opened on demand on the first call.
+stdin = macro(function()
+	return quote
+		if _stdin == nil then _stdin = fdopen(0, 'r') end
+		in _stdin
+	end
+end)
 stdout = macro(function()
 	return quote
-		if _stdout == nil then _stdout = _fdopen(1, 'w') end
+		if _stdout == nil then _stdout = fdopen(1, 'w') end
 		in _stdout
 	end
 end)
 stderr = macro(function()
 	return quote
-		if _stderr == nil then _stderr = _fdopen(2, 'w') end
+		if _stderr == nil then _stderr = fdopen(2, 'w') end
 		in _stderr
 	end
 end)
+
+--Lua-style print ------------------------------------------------------------
 
 prf = macro(function(...)
 	local args = {...}
@@ -114,7 +126,7 @@ pr = macro(function(...)
 		elseif t == int16    then add(fmt, '%ds\t'  ); add(args, arg)
 		elseif t == uint16   then add(fmt, '%uw\t'  ); add(args, arg)
 		elseif t == int32    then add(fmt, '%d\t'   ); add(args, arg)
-		elseif t == uint32   then add(fmt, '%u\t'   ); add(args, arg)
+		elseif t == uint32   then add(fmt, '%uu\t'  ); add(args, arg)
 		elseif t == int64    then add(fmt, '%lldL\t'); add(args, arg)
 		elseif t == uint64   then add(fmt, '%lluU\t'); add(args, arg)
 		elseif t == double   then add(fmt, '%gd\t'  ); add(args, arg)
@@ -159,7 +171,6 @@ end)
 --assert ---------------------------------------------------------------------
 
 low.check = macro(function(e, msg)
-	local fdopen = ffi.abi'win' and _fdopen or fdopen
 	return quote
 		if not e then
 			var stderr = stderr()
@@ -174,6 +185,30 @@ low.check = macro(function(e, msg)
 		end
 	end
 end)
+
+--checked allocators ---------------------------------------------------------
+
+low.allocs = function()
+	local C = {}
+	local size_t = uint64
+
+	terra C.malloc(size: size_t): &opaque
+		var p = malloc(size)
+		return p
+	end
+	terra C.calloc(n: size_t, size: size_t)
+		var p = calloc(n, size)
+		return p
+	end
+	terra C.realloc(p0: &opaque, size: size_t)
+		var p = realloc(p0, size)
+		return p
+	end
+	terra C.free(p: &opaque)
+		free(p)
+	end
+	return C
+end
 
 --binsearch macro ------------------------------------------------------------
 
