@@ -4,8 +4,10 @@
 
 if not ... then require'low_test'; return; end
 
-local glue = require'glue'
 local ffi = require'ffi'
+
+local memoize = terralib.memoize
+local function update(d,t) for k,v in pairs(t) do d[k]=v; end; return dt end
 
 --usage: setfenv(1, require'low')
 local low = {}; setmetatable(low, low).__index = _G; low.low = low
@@ -58,17 +60,19 @@ function low.I(path)
 	terralib.includepath = terralib.includepath .. P(';'..path)
 end
 
-local includec = glue.memoize(function(header)
-	return terralib.includec(header)
-end)
-function low.include(header)
-	local C
+--overriding this built-in so that modules can depend on it being memoized.
+local terralib_includec = terralib.includec
+terralib.includec = memoize(function(header, ...)
 	for _,loader in pairs(low.include_loaders) do
-		C = loader(header)
-		if C then break end
+		local C = loader(header, ...)
+		if C then return C end
 	end
-	C = C or includec(header)
-	return glue.update(low.C, C)
+	return terralib_includec(header, ...)
+end)
+
+--terralib.includec variant that dumps symbols into low.C.
+function low.include(header)
+	return update(C, terralib.includec(header))
 end
 
 function low.link(lib)
@@ -76,7 +80,7 @@ function low.link(lib)
 end
 
 function C:__call(cstring)
-	return glue.update(self, terralib.includecstring(cstring))
+	return update(self, terralib.includecstring(cstring))
 end
 
 --stdlib dependencies --------------------------------------------------------
@@ -277,7 +281,7 @@ end)
 
 --dynamic arrays -------------------------------------------------------------
 
-low.dynarray_type = glue.memoize(function(T, size_t, resize_factor)
+low.dynarray_type = memoize(function(T, size_t, resize_factor)
 	size_t = size_t or uint32
 	resize_factor = resize_factor or 2
 	local arr = struct {
@@ -325,7 +329,7 @@ end)
 
 --stacks ---------------------------------------------------------------------
 
-low.stack = glue.memoize(function(T)
+low.stack = memoize(function(T)
 	local stack = struct {
 		data: &T;
 		size: int;
@@ -357,7 +361,7 @@ end)
 
 --free lists -----------------------------------------------------------------
 
-low.freelist = glue.memoize(function(T)
+low.freelist = memoize(function(T)
 	local freelist = struct {
 		data: &&T;
 		size: int;
@@ -397,7 +401,7 @@ end)
 
 --ever-growing buffer --------------------------------------------------------
 
-low.growbuffer = glue.memoize(function(T)
+low.growbuffer = memoize(function(T)
 	local growbuffer = struct {
 		data: &T;
 		size: int;
@@ -418,6 +422,9 @@ low.growbuffer = glue.memoize(function(T)
 	end
 	return growbuffer
 end)
+
+--
+
 
 --language utils -------------------------------------------------------------
 
