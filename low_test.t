@@ -49,14 +49,6 @@ local terra test_dynarray()
 end
 test_dynarray()
 
-local terra test_stack()
-	var stack: stack(int32)
-	stack:alloc(1)
-	stack:push(5)
-	stack:pop()
-end
-test_stack()
-
 local terra test_freelist()
 	var fl: freelist(int32)
 	fl:alloc(10)

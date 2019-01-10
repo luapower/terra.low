@@ -260,14 +260,16 @@ low.new = macro(function(T, len)
 		var len: int = [len]
 		check(len >= 0)
 		var p: &T = [&T](calloc(len, sizeof(T)))
-	in
-		p
+	in	p
 	end
 end)
 
 --typed memset ---------------------------------------------------------------
 
 low.fill = macro(function(rval, val, len)
+	if len == nil then --fill(rval, len)
+		val, len = nil, val
+	end
 	val = val or 0
 	len = len or 1
 	local size = sizeof(rval:gettype().type)
@@ -279,9 +281,8 @@ end)
 
 --dynamic arrays -------------------------------------------------------------
 
-low.dynarray_type = memoize(function(T, size_t, resize_factor)
-	size_t = size_t or uint32
-	resize_factor = resize_factor or 2
+local function dynarray_type(T, size_t, resize_factor, C)
+	local memmove = C.memmove
 	local arr = struct {
 		size: size_t;
 		len: size_t;
@@ -293,21 +294,30 @@ low.dynarray_type = memoize(function(T, size_t, resize_factor)
 		end
 	end
 	terra arr:resize(size: size_t): bool
+		check(size >= 0)
+		if self.size == size then return true end
 		var new_data = [&T](C.realloc(self.data, sizeof(T) * size))
-		if new_data == nil then return false end
+		if size > 0 and new_data == nil then return false end
 		self.data = new_data
 		self.size = size
 		self.len = min(size, self.len)
 		return true
 	end
+	terra arr:shrink()
+		if self.size == self.len then return true end
+		return self:resize(self.len)
+	end
 	terra arr:free()
 		self:resize(0)
 	end
 	terra arr:get(i: size_t)
+		if i < 0 then i = self.len - i end
 		check(i >= 0 and i < self.len)
 		return self.data[i]
 	end
 	terra arr:set(i: size_t, val: T): bool
+		if i < 0 then i = self.len - i end
+		check(i >= 0)
 		if i >= self.size then
 			if not self:resize(max(i + 1, self.size * resize_factor)) then
 				return false
@@ -317,44 +327,44 @@ low.dynarray_type = memoize(function(T, size_t, resize_factor)
 		self.len = max(self.len, i + 1)
 		return true
 	end
-	return arr
-end)
-
-low.dynarray = macro(function(T, size, size_t, resize_factor)
-	local arr_t = dynarray_type(T:astype(), size_t, resize_factor)
-	return quote var a: arr_t = {}; a:resize(size); in a end
-end)
-
---stacks ---------------------------------------------------------------------
-
-low.stack = memoize(function(T)
-	local stack = struct {
-		data: &T;
-		size: int;
-		len: int;
-	}
-	terra stack:alloc(size: int)
-		self.data = new(T, size)
-		self.size = size
-		self.len = 0
+	terra arr:push(val: T)
+		return self:set(self.len, val)
 	end
-	terra stack:free()
-		free(self.data)
-		self.data = nil
-		self.size = 0
-		self.len = 0
-	end
-	terra stack:push(elem: T)
-		check(self.len < self.size)
-		self.data[self.len] = elem
-		self.len = self.len + 1
-	end
-	terra stack:pop(): T
-		check(self.len >= 1)
+	terra arr:pop()
+		var v = self:get(-1)
 		self.len = self.len - 1
-		return self.data[self.len]
+		return v
 	end
-	return stack
+	terra arr:shift(i: size_t, n: size_t)
+		if i < 0 then i = self.len - i end
+		check(i >= 0)
+		if n > 0 then --shift to the right, making space at i
+			var b = max(0, self.len-(i+1)) --how many bytes must be moved
+			if not self:resize(max(self.size, i+n+1+b)) then
+				return false
+			end
+			if b > 0 then
+				memmove(self.data+i+n+1, self.data+i+1, b)
+			end
+		elseif n < 0 then --shift to the left, collapsing the space at i
+			n = min(-n, self.len-i)
+			memmove(self.data+i, self.data+i+n, n)
+		end
+		return true
+	end
+	return arr
+end
+
+low.dynarray_type = memoize(function(T, size_t, resize_factor, C)
+	size_t = size_t or int32
+	resize_factor = resize_factor or 2
+	C = C or low.C
+	return dynarray_type(T, size_t, resize_factor, C)
+end)
+
+low.dynarray = macro(function(T, size, size_t, resize_factor, C)
+	local arr_t = low.dynarray_type(T:astype(), size_t, resize_factor, C)
+	return quote var a: arr_t = {}; a:resize(size); in a end
 end)
 
 --free lists -----------------------------------------------------------------
@@ -420,9 +430,6 @@ low.growbuffer = memoize(function(T)
 	end
 	return growbuffer
 end)
-
---
-
 
 --language utils -------------------------------------------------------------
 
