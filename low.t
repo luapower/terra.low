@@ -189,7 +189,7 @@ end)
 --checked allocators ---------------------------------------------------------
 
 low.allocs = function()
-	local C = {}
+	local C = setmetatable({}, {__index = C})
 	local size_t = uint64
 
 	terra C.malloc(size: size_t): &opaque
@@ -264,6 +264,54 @@ low.fill = macro(function(rval, val, len)
 		check(len >= 0)
 		memset(rval, val, size * len)
 	end
+end)
+
+--dynamic arrays -------------------------------------------------------------
+
+low.dynarray_type = glue.memoize(function(T, size_t, resize_factor)
+	size_t = size_t or uint32
+	resize_factor = resize_factor or 2
+	local arr = struct {
+		size: size_t;
+		len: size_t;
+		data: &T;
+	}
+	function arr.metamethods.__cast(from, to, exp)
+		if from == (`{}):gettype() then --initalize with empty tuple
+			return `arr {0, 0, nil}
+		end
+	end
+	terra arr:resize(size: size_t): bool
+		var new_data = [&T](C.realloc(self.data, sizeof(T) * size))
+		if new_data == nil then return false end
+		self.data = new_data
+		self.size = size
+		self.len = min(size, self.len)
+		return true
+	end
+	terra arr:free()
+		self:resize(0)
+	end
+	terra arr:get(i: size_t)
+		check(i >= 0 and i < self.len)
+		return self.data[i]
+	end
+	terra arr:set(i: size_t, val: T): bool
+		if i >= self.size then
+			if not self:resize(max(i + 1, self.size * resize_factor)) then
+				return false
+			end
+		end
+		self.data[i] = val
+		self.len = max(self.len, i + 1)
+		return true
+	end
+	return arr
+end)
+
+low.dynarray = macro(function(T, size, size_t, resize_factor)
+	local arr_t = dynarray_type(T:astype(), size_t, resize_factor)
+	return quote var a: arr_t = {}; a:resize(size); in a end
 end)
 
 --stacks ---------------------------------------------------------------------
