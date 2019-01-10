@@ -7,10 +7,15 @@ if not ... then require'low_test'; return; end
 local glue = require'glue'
 local ffi = require'ffi'
 
-local low = setmetatable({}, {__index = _G}) --usage: setfenv(1, require'low')
-low.low = low
-low.C = setmetatable({}, {__index = low}) --usage: setfenv(1, low.C)
-Strict.__newindex, Strict.__index = nil, nil --TODO: remove these pending terra fix.
+--usage: setfenv(1, require'low')
+local low = {}; setmetatable(low, low).__index = _G; low.low = low
+
+--usage: setfenv(1, low.C)
+low.C = {}; setmetatable(low.C, low.C).__index = low
+
+--TODO: remove these pending terra fix.
+Strict.__newindex, Strict.__index = nil, nil
+
 setfenv(1, low.C)
 
 --ternary operator -----------------------------------------------------------
@@ -40,7 +45,7 @@ package.terrapath = package.terrapath .. P'$L/?.t;$L/?/init.t'
 
 low.include_loaders = {}
 
-function low.include_loaders.freetype(header)
+function low.include_loaders.freetype(header) --motivating example
 	local header = header:match'^freetype/(.*)'
 	if header then
 		return terralib.includecstring([[
@@ -63,11 +68,15 @@ function low.include(header)
 		if C then break end
 	end
 	C = C or includec(header)
-	glue.update(low.C, C)
+	return glue.update(low.C, C)
 end
 
 function low.link(lib)
 	terralib.linklibrary(P(lib))
+end
+
+function C:__call(cstring)
+	return glue.update(self, terralib.includecstring(cstring))
 end
 
 --stdlib dependencies --------------------------------------------------------
@@ -189,7 +198,7 @@ end)
 --checked allocators ---------------------------------------------------------
 
 low.allocs = function()
-	local C = setmetatable({}, {__index = C})
+	local C = {}; setmetatable(C, C).__index = low.C
 	local size_t = uint64
 
 	terra C.malloc(size: size_t): &opaque
