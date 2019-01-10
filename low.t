@@ -75,9 +75,7 @@ function low.include(header)
 	return update(C, terralib.includec(header))
 end
 
-function low.link(lib)
-	terralib.linklibrary(P(lib))
-end
+low.linklibrary = terralib.linklibrary
 
 function C:__call(cstring)
 	return update(self, terralib.includecstring(cstring))
