@@ -27,10 +27,12 @@ low.iif = macro(function(cond, t, f)
 	return quote var v: t:gettype(); if cond then v = t else v = f end in v end
 end)
 
---min/max --------------------------------------------------------------------
+--min/max/clamp --------------------------------------------------------------
 
 low.min = macro(function(a, b) return `iif(a < b, a, b) end)
 low.max = macro(function(a, b) return `iif(a > b, a, b) end)
+low.clamp = macro(function(x, m, M) return `min(max(x, m), M) end)
+low.abs = macro(function(x) return `iif(x < 0, -x, x) end)
 
 --C include system -----------------------------------------------------------
 
@@ -79,6 +81,20 @@ low.linklibrary = terralib.linklibrary
 
 function C:__call(cstring)
 	return update(self, terralib.includecstring(cstring))
+end
+
+function low.cached(C)
+	local t = {}; setmetatable(t, t)
+	t.__deps = {}
+	function t:__index(k)
+		if rawget(C, k) ~= nil then
+			table.insert(t.__deps, k)
+		end
+		local v = C[k]
+		self[k] = v
+		return v
+	end
+	return t
 end
 
 --stdlib dependencies --------------------------------------------------------
@@ -142,6 +158,7 @@ pr = macro(function(...)
 		elseif t == uint64   then add(fmt, '%lluU\t'); add(args, arg)
 		elseif t == double   then add(fmt, '%gd\t'  ); add(args, arg)
 		elseif t == float    then add(fmt, '%gf\t'  ); add(args, arg)
+		elseif t == bool     then add(fmt, '%s\t'   ); add(args, `iif(arg, 'true\t', 'false\t'));
 		elseif t:isarray() then
 			add(fmt, '[')
 			local j=#fmt
@@ -186,10 +203,10 @@ low.check = macro(function(e, msg)
 		if not e then
 			var stderr = stderr()
 			fprintf(stderr, [
-				(msg or 'assertion failed') .. ' '
+				'assertion failed' .. ' '
 				.. tostring(e.filename)
 				.. ':' .. tostring(e.linenumber)
-				.. ': ' .. tostring(e) .. '\n'
+				.. ': ' .. (msg and msg:asvalue() or tostring(e)) .. '\n'
 			])
 			fflush(stderr)
 			abort()
@@ -279,94 +296,6 @@ low.fill = macro(function(rval, val, len)
 	end
 end)
 
---dynamic arrays -------------------------------------------------------------
-
-local function dynarray_type(T, size_t, resize_factor, C)
-	local memmove = C.memmove
-	local arr = struct {
-		size: size_t;
-		len: size_t;
-		data: &T;
-	}
-	function arr.metamethods.__cast(from, to, exp)
-		if from == (`{}):gettype() then --initalize with empty tuple
-			return `arr {0, 0, nil}
-		end
-	end
-	terra arr:resize(size: size_t): bool
-		check(size >= 0)
-		if self.size == size then return true end
-		var new_data = [&T](C.realloc(self.data, sizeof(T) * size))
-		if size > 0 and new_data == nil then return false end
-		self.data = new_data
-		self.size = size
-		self.len = min(size, self.len)
-		return true
-	end
-	terra arr:shrink()
-		if self.size == self.len then return true end
-		return self:resize(self.len)
-	end
-	terra arr:free()
-		self:resize(0)
-	end
-	terra arr:get(i: size_t)
-		if i < 0 then i = self.len - i end
-		check(i >= 0 and i < self.len)
-		return self.data[i]
-	end
-	terra arr:set(i: size_t, val: T): bool
-		if i < 0 then i = self.len - i end
-		check(i >= 0)
-		if i >= self.size then
-			if not self:resize(max(i + 1, self.size * resize_factor)) then
-				return false
-			end
-		end
-		self.data[i] = val
-		self.len = max(self.len, i + 1)
-		return true
-	end
-	terra arr:push(val: T)
-		return self:set(self.len, val)
-	end
-	terra arr:pop()
-		var v = self:get(-1)
-		self.len = self.len - 1
-		return v
-	end
-	terra arr:shift(i: size_t, n: size_t)
-		if i < 0 then i = self.len - i end
-		check(i >= 0)
-		if n > 0 then --shift to the right, making space at i
-			var b = max(0, self.len-(i+1)) --how many bytes must be moved
-			if not self:resize(max(self.size, i+n+1+b)) then
-				return false
-			end
-			if b > 0 then
-				memmove(self.data+i+n+1, self.data+i+1, b)
-			end
-		elseif n < 0 then --shift to the left, collapsing the space at i
-			n = min(-n, self.len-i)
-			memmove(self.data+i, self.data+i+n, n)
-		end
-		return true
-	end
-	return arr
-end
-
-low.dynarray_type = memoize(function(T, size_t, resize_factor, C)
-	size_t = size_t or int32
-	resize_factor = resize_factor or 2
-	C = C or low.C
-	return dynarray_type(T, size_t, resize_factor, C)
-end)
-
-low.dynarray = macro(function(T, size, size_t, resize_factor, C)
-	local arr_t = low.dynarray_type(T:astype(), size_t, resize_factor, C)
-	return quote var a: arr_t = {}; a:resize(size); in a end
-end)
-
 --free lists -----------------------------------------------------------------
 
 low.freelist = memoize(function(T)
@@ -431,6 +360,16 @@ low.growbuffer = memoize(function(T)
 	return growbuffer
 end)
 
---language utils -------------------------------------------------------------
+--add virtual fields to structs ----------------------------------------------
+
+function low.addproperties(T)
+	local p = {}
+	T.metamethods.__entrymissing = macro(function(k, self)
+		return `[p[k]]
+	end)
+	return p
+end
+
+
 
 return low

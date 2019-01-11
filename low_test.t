@@ -41,14 +41,6 @@ local terra test_binsearch()
 end
 test_binsearch()
 
-local terra test_dynarray()
-	var arr = dynarray(int, 10)
-	arr:set(15, 1234)
-	pr(arr.size, arr.len, arr:get(15))
-	arr:free()
-end
-test_dynarray()
-
 local terra test_freelist()
 	var fl: freelist(int32)
 	fl:alloc(10)
