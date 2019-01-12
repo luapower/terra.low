@@ -20,19 +20,38 @@ Strict.__newindex, Strict.__index = nil, nil
 
 setfenv(1, low.C)
 
---ternary operator -----------------------------------------------------------
+--logical operators ----------------------------------------------------------
 
 --NOTE: terralib.select() can also be used but it's not short-circuiting.
 low.iif = macro(function(cond, t, f)
 	return quote var v: t:gettype(); if cond then v = t else v = f end in v end
 end)
 
---min/max/clamp --------------------------------------------------------------
+--basic math -----------------------------------------------------------------
 
 low.min = macro(function(a, b) return `iif(a < b, a, b) end)
 low.max = macro(function(a, b) return `iif(a > b, a, b) end)
 low.clamp = macro(function(x, m, M) return `min(max(x, m), M) end)
 low.abs = macro(function(x) return `iif(x < 0, -x, x) end)
+
+--integer limits -------------------------------------------------------------
+
+local maxint = {}
+local minint = {}
+maxint[int8  ] = `[int8  ]( 0x7F)
+minint[int8  ] = `[int8  ](-0x80)
+maxint[int16 ] = `[int16 ]( 0x7FFF)
+minint[int16 ] = `[int16 ](-0x8000)
+maxint[int32 ] = `[int32 ]( 0x7FFFFFFF)
+minint[int32 ] = `[int32 ](-0x80000000)
+maxint[int64 ] = ` 0x7FFFFFFFFFFFFFFFLL
+minint[int64 ] = `-0x8000000000000000LL
+maxint[uint8 ] = `[uint8 ](0xFF)
+maxint[uint16] = `[uint16](0xFFFF)
+maxint[uint32] = `[uint32](0xFFFFFFFF)
+maxint[uint64] = ` 0xFFFFFFFFFFFFFFFFULL
+low.maxint = macro(function(T) return maxint[T:astype()] end)
+low.minint = macro(function(T) return minint[T:astype()] end)
 
 --C include system -----------------------------------------------------------
 
@@ -147,7 +166,7 @@ pr = macro(function(...)
 	local add = table.insert
 	local function format(arg)
 		local t = arg:gettype()
-		    if t == &int8    then add(fmt, '%s\t'   ); add(args, arg)
+		    if t == &int8    then add(fmt, "'%s'\t" ); add(args, arg)
 		elseif t == int8     then add(fmt, '%dc\t'  ); add(args, arg)
 		elseif t == uint8    then add(fmt, '%ub\t'  ); add(args, arg)
 		elseif t == int16    then add(fmt, '%ds\t'  ); add(args, arg)
