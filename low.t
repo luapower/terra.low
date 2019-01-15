@@ -24,7 +24,14 @@ Strict.__newindex, Strict.__index = nil, nil
 
 setfenv(1, low)
 
---OS define ------------------------------------------------------------------
+--ternary operator -----------------------------------------------------------
+
+--NOTE: terralib.select() can also be used but it's not short-circuiting.
+low.iif = macro(function(cond, t, f)
+	return quote var v: t:gettype(); if cond then v = t else v = f end in v end
+end)
+
+--OS defines -----------------------------------------------------------------
 
 low.Windows = false
 low.Linux = false
@@ -42,20 +49,7 @@ low.C = C
 --promoting to global --------------------------------------------------------
 
 low.linklibrary = terralib.linklibrary
-low.overload = terralib.overloadedfunction
-
-israwlist  = terralib.israwlist
-isterra    = terralib.isfunction
-isoverload = terralib.isoverloadedfunction
-isintegral = terralib.isintegral
-
-istype     = terralib.types.istype
-islabel    = terralib.islabel
-isquote    = terralib.isquote
-issymbol   = terralib.issymbol
-isconstant = terralib.isconstant
-isglobal   = terralib.isglobalvar
-ismacro    = terralib.ismacro
+low.overloadedfunction = terralib.overloadedfunction
 
 function low.externfunction(name, T)
 	local func = terralib.externfunction(name, T)
@@ -85,18 +79,19 @@ Only from Terra:
 
 Type checks:
 	terralib.type
-	terralib.types.istype
-	terralib.israwlist
 	terralib.isfunction
+	terralib.isoverloadedfunction
+	terralib.isintegral
+	terralib.types.istype
 	terralib.islabel
 	terralib.isquote
-	terralib.islist
 	terralib.issymbol
 	terralib.isconstant
-	terralib.isoverloadedfunction
-	terralib.ismacro
-	terralib.isintegral
 	terralib.isglobalvar
+	terralib.ismacro
+	terralib.isfunction
+	terralib.islist
+	terralib.israwlist
 	sizeof
 	<numeric_type>.signed
 	<pointer_type>.type
@@ -115,7 +110,6 @@ Used rarely:
 	terralib.linklibrary
 
 Not used yet:
-	terralib.externfunction
 	terralib.newlist
 	terralib.loadfile
 	terralib.version
@@ -208,32 +202,6 @@ Undocumented / ???:
 
 ]]
 
---logical operators ----------------------------------------------------------
-
---NOTE: terralib.select() can also be used but it's not short-circuiting.
-low.iif = macro(function(cond, t, f)
-	return quote var v: t:gettype(); if cond then v = t else v = f end in v end
-end)
-
---integer limits -------------------------------------------------------------
-
-local maxint = {}
-local minint = {}
-maxint[int8  ] = `[int8  ]( 0x7F)
-minint[int8  ] = `[int8  ](-0x80)
-maxint[int16 ] = `[int16 ]( 0x7FFF)
-minint[int16 ] = `[int16 ](-0x8000)
-maxint[int32 ] = `[int32 ]( 0x7FFFFFFF)
-minint[int32 ] = `[int32 ](-0x80000000)
-maxint[int64 ] = ` 0x7FFFFFFFFFFFFFFFLL
-minint[int64 ] = `-0x8000000000000000LL
-maxint[uint8 ] = `[uint8 ](0xFF)
-maxint[uint16] = `[uint16](0xFFFF)
-maxint[uint32] = `[uint32](0xFFFFFFFF)
-maxint[uint64] = ` 0xFFFFFFFFFFFFFFFFULL
-low.maxint = macro(function(T) return maxint[T:astype()] end)
-low.minint = macro(function(T) return minint[T:astype()] end)
-
 --C include system -----------------------------------------------------------
 
 local platos = {Windows = 'mingw', Linux = 'linux', OSX = 'osx'}
@@ -301,6 +269,25 @@ include'stdlib.h'
 include'string.h'
 include'math.h'
 
+--integer limits -------------------------------------------------------------
+
+local maxint = {}
+local minint = {}
+maxint[int8  ] = `[int8  ]( 0x7F)
+minint[int8  ] = `[int8  ](-0x80)
+maxint[int16 ] = `[int16 ]( 0x7FFF)
+minint[int16 ] = `[int16 ](-0x8000)
+maxint[int32 ] = `[int32 ]( 0x7FFFFFFF)
+minint[int32 ] = `[int32 ](-0x80000000)
+maxint[int64 ] = ` 0x7FFFFFFFFFFFFFFFLL
+minint[int64 ] = `-0x8000000000000000LL
+maxint[uint8 ] = `[uint8 ](0xFF)
+maxint[uint16] = `[uint16](0xFFFF)
+maxint[uint32] = `[uint32](0xFFFFFFFF)
+maxint[uint64] = ` 0xFFFFFFFFFFFFFFFFULL
+low.maxint = macro(function(T) return maxint[T:astype()] end)
+low.minint = macro(function(T) return minint[T:astype()] end)
+
 --math module ----------------------------------------------------------------
 
 low.PI    = math.pi
@@ -332,10 +319,41 @@ low.round = macro(function(x, p)
 	end
 end, round)
 low.snap = low.round
-low.clamp = macro(function(x, m, M) return `min(max(x, m), M) end, clamp)
+
+low.clamp = macro(function(x, m, M)
+	return `min(max(x, m), M)
+end, clamp)
+
 low.lerp = macro(function(x, x0, x1, y0, y1)
 	return `y0 + (x-x0) * ([double](y1-y0) / (x1 - x0))
 end, lerp)
+
+--binary search for an insert position that keeps the array sorted.
+local less = macro(function(t, i, v) return `t[i] <  v end)
+low.binsearch = macro(function(v, t, lo, hi, cmp)
+	cmp = cmp or less
+	return quote
+		var lo = [lo]
+		var hi = [hi]
+		var i = hi + 1
+		while true do
+			if lo < hi then
+				var mid: int = lo + (hi - lo) / 2
+				if cmp(t, mid, v) then
+					lo = mid + 1
+				else
+					hi = mid
+				end
+			else
+				if lo == hi and not cmp(t, lo, v) then
+					i = lo
+				end
+				break
+			end
+		end
+	in i
+	end
+end, binsearch)
 
 --stdin/out/err --------------------------------------------------------------
 
@@ -494,36 +512,6 @@ low.allocs = function()
 	end
 	return C
 end
-
---binsearch macro ------------------------------------------------------------
-
---binary search for an insert position that keeps the array sorted.
-local less = macro(function(t, i, v) return `t[i] <  v end)
-low.binsearch = macro(function(v, t, lo, hi, cmp)
-	cmp = cmp or less
-	return quote
-		var lo = [lo]
-		var hi = [hi]
-		var i = hi + 1
-		while true do
-			if lo < hi then
-				var mid: int = lo + (hi - lo) / 2
-				if cmp(t, mid, v) then
-					lo = mid + 1
-				else
-					hi = mid
-				end
-			else
-				if lo == hi and not cmp(t, lo, v) then
-					i = lo
-				end
-				break
-			end
-		end
-	in
-		i
-	end
-end, binsearch)
 
 --typed calloc ---------------------------------------------------------------
 
