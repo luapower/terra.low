@@ -1,13 +1,16 @@
 
---low: everyday Terra functions.
+--low: Lua+Terra standard library & flat vocabulary of tools.
 --Written by Cosmin Apreutesei. Public domain.
+--Intended to be used global environment: setfenv(1, require'low').
 
 if not ... then require'low_test'; return; end
 
 local ffi = require'ffi'
 local glue = require'glue'
-local random = require'random'
 local pp = require'pp'
+local random = require'random'
+local dynarray = require'dynarray'
+local khash = require'khash'
 
 local memoize = glue.memoize
 local update = glue.update
@@ -16,7 +19,7 @@ local clamp = glue.clamp
 local lerp = glue.lerp
 local binsearch = glue.binsearch
 
---usage: setfenv(1, require'low')
+--The C namespace: include() and extern() dump symbols here.
 local C = {}; setmetatable(C, C); C.__index = _G
 local low = {}; setmetatable(low, low); low.__index = C
 
@@ -31,6 +34,16 @@ setfenv(1, low)
 low.iif = macro(function(cond, t, f)
 	return quote var v: t:gettype(); if cond then v = t else v = f end in v end
 end)
+
+--add virtual fields to structs ----------------------------------------------
+
+function low.addproperties(T)
+	local props = {}
+	T.metamethods.__entrymissing = macro(function(k, self)
+		return `[props[k]](self)
+	end)
+	return props
+end
 
 --OS defines -----------------------------------------------------------------
 
@@ -48,10 +61,67 @@ low.low = low
 low.C = C
 low.glue = glue
 low.pp = pp
+low.dynarray = dynarray
+low.map = khash.map
+low.set = khash.set
 
---promoting to global --------------------------------------------------------
+--promoting symbols to global ------------------------------------------------
 
---Lua
+--[[  Lua 5.1 std library use (promoted symbols not listed)
+
+TODO:
+	assert with format		glue.assert
+	print with format			print(format(...))
+	pcall with traceback		glue.pcall
+	append -> add
+
+Modules:
+	table math io os string debug coroutine package
+
+Used:
+	type tostring tonumber
+	setmetatable getmetatable rawget rawset rawequal
+	next pairs ipairs
+	print
+	pcall xpcall error assert
+	select unpack
+	require load loadstring loadfile dofile
+	setfenv getfenv
+	s:rep s:sub s:upper s:lower
+	s:find s:gsub s:gmatch s:match
+	s:byte s:char
+	io.stdin io.stdout io.stderr
+	io.open io.popen io.lines io.tmpfile io.type
+	os.execute os.rename os.remove
+	os.getenv
+	os.difftime os.date os.time
+	arg _G
+	collectgarbage newproxy
+	math.log
+	s:reverse s:dump s:format(=string.format)
+	coroutine.status coroutine.running
+	debug.getinfo
+	package.path package.cpath package.config
+	package.loaded package.searchpath package.loaders
+	os.exit
+
+Not used:
+	table.maxn
+	math.modf math.mod math.fmod math.log10 math.exp
+	math.sinh math.cosh math.tanh
+
+Never use:
+	module gcinfo _VERSION
+	math.huge(=1/0) math.pow math.ldexp
+	s:len s:gfind os.clock
+	table.getn table.foreach table.foreachi
+	io.close io.input io.output io.read io.write io.flush
+	os.tmpname os.setlocale
+	package.loadlib package.preload package.seeall
+	debug.*
+
+]]
+
 push   = table.insert
 add    = table.insert
 pop    = table.remove
@@ -64,7 +134,33 @@ resume   = coroutine.resume
 cowrap   = coroutine.wrap
 cocreate = coroutine.create
 
---BitOps
+--[[  LuaJIT 2.1 std library use (promoted symbols not listed)
+
+Modules:
+	bit jit ffi
+
+Used:
+	ffi.new
+	ffi.string ffi.cast ffi.sizeof ffi.istype ffi.typeof ffi.offsetof
+	ffi.copy ffi.fill
+	ffi.load ffi.cdef
+	ffi.metatype ffi.gc
+	ffi.errno
+	ffi.C
+	jit.off
+
+Not used:
+	bit.rol bit.ror bit.bswap bit.arshif bit.tobit bit.tohex
+	ffi.alignof
+	jit.flush
+
+Never use:
+	ffi.os ffi.abi ffi.arch
+	jit.os jit.arch jit.version jit.version_num jit.on jit.status
+	jit.attach jit.util jit.opt
+
+]]
+
 bnot = bit.bnot
 shl = bit.lshift
 shr = bit.rshift
@@ -72,17 +168,18 @@ band = bit.band
 bor = bit.bor
 xor = bit.bxor
 
---Terra
-low.linklibrary = terralib.linklibrary
-low.overloadedfunction = terralib.overloadedfunction
+--[[  Terra 1.0.0 std library use (promoted symbols not listed)
 
-function low.externfunction(name, T)
-	local func = terralib.externfunction(name, T)
-	C[name] = func
-	return func
-end
+Used:
+	terra quote escape struct
+	global constant
+	(u)int8|16|32|64 int long float double bool niltype opaque rawstring ptrdiff
+	sizeof
+	import
 
---[[
+Not used:
+	unit(=:isunit, ={})
+
 Type checks:
 	terralib.type
 	terralib.isfunction
@@ -98,7 +195,6 @@ Type checks:
 	terralib.isfunction
 	terralib.islist
 	terralib.israwlist
-	sizeof
 	<numeric_type>.signed
 	<pointer_type>.type
 
@@ -109,29 +205,20 @@ FFI objects:
 	terralib.offsetof
 
 Used rarely:
-	terralib.load terralib.loadstring
-	terralib.includecstring terralib.includec
+	terralib.load terralib.loadstring terralib.loadfile
+	terralib.includec
 	terralib.saveobj
 	package.terrapath terralib.includepath
-	terralib.types.newstruct
 
 Not used yet:
-	terralib.linkllvm
-	terralib.linkllvmstring
+	terralib.linkllvm terralib.linkllvmstring
 	terralib.newlist
-	terralib.loadfile
 	terralib.version
 	terralib.intrinsic
 	terralib.select
 	terralib.newtarget terralib.istarget
 	terralib.terrahome
 	terralib.systemincludes
-
-Never use:
-	terralib.memoize(=glue.memoize)
-	terralib.newlabel(=label)
-	terralib.newsymbol(=symbol)
-	terralib.createmacro(=macro)
 
 Debugging:
 	terralib.traceback
@@ -140,7 +227,7 @@ Debugging:
 	terralib.lookupsymbol
 	terralib.lookupline
 
-Undocumented / ???:
+Undocumented:
 	terralib.dumpmodule
 	terralib.types
 	terralib.types.funcpointer
@@ -177,21 +264,27 @@ Undocumented / ???:
 
 ]]
 
+low.char = int8
+low.linklibrary = terralib.linklibrary
+low.overload = terralib.overloadedfunction
+low.newstruct = terralib.types.newstruct
+
 --C include system -----------------------------------------------------------
 
 local platos = {Windows = 'mingw', Linux = 'linux', OSX = 'osx'}
 local lp_platform = platos[ffi.os]..'64'
 
-low.paths = {L = '.', P = lp_platform}
-local function P(s) return s:gsub('$(%a)', low.paths) end
+low.path_vars = {L = '.', P = lp_platform}
+local function P(s) return s:gsub('$(%a)', low.path_vars) end
 
+--add luapower's standard paths relative to the current directory.
 package.path = package.path .. P'$L/bin/$P/lua/?.lua;$L/?.lua;$L/?/init.lua'
 package.cpath = package.cpath .. P';$L/bin/mingw64/clib/?.dll'
 package.terrapath = package.terrapath .. P'$L/?.t;$L/?/init.t'
 
-low.include_loaders = {}
+low.includec_loaders = {}
 
-function low.include_loaders.freetype(header) --motivating example
+function low.includec_loaders.freetype(header) --motivating example
 	local header = header:match'^freetype/(.*)'
 	if header then
 		return terralib.includecstring([[
@@ -207,7 +300,7 @@ end
 --overriding this built-in so that modules can depend on it being memoized.
 local terralib_includec = terralib.includec
 terralib.includec = memoize(function(header, ...)
-	for _,loader in pairs(low.include_loaders) do
+	for _,loader in pairs(low.includec_loaders) do
 		local C = loader(header, ...)
 		if C then return C end
 	end
@@ -219,22 +312,14 @@ function low.include(header)
 	return update(C, terralib.includec(header))
 end
 
-function C:__call(cstring)
-	return update(self, terralib.includecstring(cstring))
+function low.extern(name, T)
+	local func = terralib.externfunction(name, T)
+	C[name] = func
+	return func
 end
 
-function low.cached(C)
-	local t = {}; setmetatable(t, t)
-	t.__deps = {}
-	function t:__index(k)
-		if rawget(C, k) ~= nil then
-			table.insert(t.__deps, k)
-		end
-		local v = C[k]
-		self[k] = v
-		return v
-	end
-	return t
+function C:__call(cstring)
+	return update(self, terralib.includecstring(cstring))
 end
 
 --stdlib dependencies --------------------------------------------------------
@@ -284,7 +369,7 @@ low.rad   = macro(function(d) return `d * (PI / 180.0) end, math.rad)
 low.random    = random.random
 low.randomize = random.randomize
 
---glue/math module -----------------------------------------------------------
+--glue module ----------------------------------------------------------------
 
 low.round = macro(function(x, p)
 	if p and p ~= 1 then
@@ -354,6 +439,84 @@ low.stderr = macro(function()
 	end
 end)
 
+--tostring -------------------------------------------------------------------
+
+local function format_arg(arg, fmt, args, freelist)
+	local t = arg:gettype()
+		 if t == &int8    then add(fmt, '%s'   ); add(args, arg)
+	elseif t == int8     then add(fmt, '%d'   ); add(args, arg)
+	elseif t == uint8    then add(fmt, '%u'   ); add(args, arg)
+	elseif t == int16    then add(fmt, '%d'   ); add(args, arg)
+	elseif t == uint16   then add(fmt, '%u'   ); add(args, arg)
+	elseif t == int32    then add(fmt, '%d'   ); add(args, arg)
+	elseif t == uint32   then add(fmt, '%u'   ); add(args, arg)
+	elseif t == int64    then add(fmt, '%lldL'); add(args, arg)
+	elseif t == uint64   then add(fmt, '%lluU'); add(args, arg)
+	elseif t == double   then add(fmt, '%.14g'); add(args, arg)
+	elseif t == float    then add(fmt, '%.14g'); add(args, arg)
+	elseif t == bool     then add(fmt, '%s'   ); add(args, `iif(arg, 'true', 'false'));
+	elseif t:isarray() then
+		add(fmt, '[')
+		for i=0,t.N-1 do
+			format_arg(`arg[i], fmt, args, freelist)
+			if i < t.N-1 then add(fmt, ',') end
+		end
+		add(fmt, ']')
+	elseif t:isstruct() then
+		local __tostring = t.metamethods.__tostring
+		if __tostring then
+			__tostring(arg, format_arg, fmt, args, freelist)
+		else
+			add(fmt, tostring(t)..'{')
+			local layout = t:getlayout()
+			for i,e in ipairs(layout.entries) do
+				add(fmt, e.key..'=')
+				format_arg(`arg.[e.key], fmt, args, freelist)
+				if i < #layout.entries then add(fmt, ',') end
+			end
+			add(fmt, '}')
+		end
+	elseif t:isfunction() then
+		add(fmt, tostring(t)..'<%llx>'); add(args, arg)
+	elseif t:ispointer() then
+		add(fmt, tostring(t):gsub(' ', '')..'<%llx>'); add(args, arg)
+	end
+end
+
+low.tostring = macro(function(arg, outbuf, maxlen)
+	local fmt, args, freelist = {}, {}, {}
+	format_arg(arg, fmt, args, freelist)
+	fmt = concat(fmt)
+	local snprintf = Windows and _snprintf or snprintf
+	if outbuf then
+		return quote
+			snprintf(outbuf, maxlen, fmt, [args])
+			[ freelist ]
+		end
+	else
+		return quote
+			var out = dynarray(char)
+			if out:realloc(32) then
+				var n = snprintf(out.elements, out.size, fmt, [args])
+				if n < 0 then
+					out:free()
+				elseif n < out.size then
+					out.len = n+1
+				else
+					if not out:realloc(n+1) then
+						out:free()
+					else
+						assert(snprintf(out.elements, out.size, fmt, [args]) == n)
+						out.len = n+1
+					end
+				end
+			end
+			[ freelist ]
+			in out
+		end
+	end
+end, tostring)
+
 --Lua-style print ------------------------------------------------------------
 
 low.prf = macro(function(...)
@@ -366,57 +529,20 @@ low.prf = macro(function(...)
 end)
 
 low.print = macro(function(...)
-	local args = {}
-	local fmt = {}
-	local add = table.insert
-	local function format(arg)
-		local t = arg:gettype()
-		    if t == &int8    then add(fmt, "%s\t"   ); add(args, arg)
-		elseif t == int8     then add(fmt, '%d\t'   ); add(args, arg)
-		elseif t == uint8    then add(fmt, '%u\t'   ); add(args, arg)
-		elseif t == int16    then add(fmt, '%d\t'   ); add(args, arg)
-		elseif t == uint16   then add(fmt, '%u\t'   ); add(args, arg)
-		elseif t == int32    then add(fmt, '%d\t'   ); add(args, arg)
-		elseif t == uint32   then add(fmt, '%u\t'   ); add(args, arg)
-		elseif t == int64    then add(fmt, '%lldL\t'); add(args, arg)
-		elseif t == uint64   then add(fmt, '%lluU\t'); add(args, arg)
-		elseif t == double   then add(fmt, '%.14g\t'); add(args, arg)
-		elseif t == float    then add(fmt, '%.14g\t'); add(args, arg)
-		elseif t == bool     then add(fmt, '%s\t'   ); add(args, `iif(arg, 'true\t', 'false\t'));
-		elseif t:isarray() then
-			add(fmt, '[')
-			local j=#fmt
-			for i=0,t.N-1 do
-				format(`arg[i])
-			end
-			for i=j,#fmt do fmt[i]=fmt[i]:gsub('\t', i<#fmt and ',' or '') end
-			add(fmt, ']\t')
-		elseif t:isstruct() then
-			add(fmt, t.name:gsub('anon','')..'{')
-			local layout = t:getlayout()
-			local j=#fmt
-			for i,e in ipairs(layout.entries) do
-				add(fmt, e.key..'=')
-				format(`arg.[e.key])
-			end
-			for i=j,#fmt do fmt[i]=fmt[i]:gsub('\t', i<#fmt and ',' or '') end
-			add(fmt, '}\t')
-		elseif t:isfunction() then
-			add(fmt, tostring(t)..'<%llx>\t'); add(args, arg)
-		elseif t:ispointer() then
-			add(fmt, tostring(t):gsub(' ', '')..'<%llx>\t'); add(args, arg)
-		end
-	end
-	for i=1,select('#', ...) do
+	local fmt, args, freelist = {}, {}, {}
+	local n = select('#', ...)
+	for i=1,n do
 		local arg = select(i, ...)
-		format(arg)
+		format_arg(arg, fmt, args, freelist)
+		add(fmt, i < n and '\t' or nil)
 	end
-	fmt = table.concat(fmt):gsub('\t$', '')
+	fmt = concat(fmt)
 	return quote
 		var stdout = stdout()
 		fprintf(stdout, fmt, [args])
 		fprintf(stdout, '\n')
 		fflush(stdout)
+		[ freelist ]
 	end
 end, print)
 
@@ -442,8 +568,8 @@ end, assert)
 
 local clock
 if Windows then
-	externfunction('QueryPerformanceFrequency', {&int64}->int32)
-	externfunction('QueryPerformanceCounter', {&int64}->int32)
+	extern('QueryPerformanceFrequency', {&int64}->int32)
+	extern('QueryPerformanceCounter', {&int64}->int32)
 	linklibrary'kernel32'
 	local inv_qpf = global(double, 0)
 	local terra init()
@@ -458,35 +584,19 @@ if Windows then
 		return [double](t) * inv_qpf
 	end
 elseif Linux then
+	include'time.h'
 	linklibrary'rt'
+	clock = terra(): double
+		var t: timespec
+		assert(clock_gettime(CLOCK_MONOTONIC, &tp) == 0)
+		return t.s + t.ns / 1.0e9
+	end
 elseif OSX then
-	--
+	clock = terra(): double
+		return [double](mach_absolute_time())
+	end
 end
 low.clock = macro(function() return `clock() end, terralib.currenttimeinseconds)
-
---checked allocators ---------------------------------------------------------
-
-low.allocs = function()
-	local C = {}; setmetatable(C, C).__index = low.C
-	local size_t = uint64
-
-	terra C.malloc(size: size_t): &opaque
-		var p = malloc(size)
-		return p
-	end
-	terra C.calloc(n: size_t, size: size_t)
-		var p = calloc(n, size)
-		return p
-	end
-	terra C.realloc(p0: &opaque, size: size_t)
-		var p = realloc(p0, size)
-		return p
-	end
-	terra C.free(p: &opaque)
-		free(p)
-	end
-	return C
-end
 
 --typed calloc ---------------------------------------------------------------
 
@@ -516,6 +626,30 @@ low.fill = macro(function(lval, val, len)
 		in lval
 	end
 end)
+
+--checked allocators ---------------------------------------------------------
+
+low.allocs = function()
+	local C = {}; setmetatable(C, C).__index = low.C
+	local size_t = uint64
+
+	terra C.malloc(size: size_t): &opaque
+		var p = malloc(size)
+		return p
+	end
+	terra C.calloc(n: size_t, size: size_t)
+		var p = calloc(n, size)
+		return p
+	end
+	terra C.realloc(p0: &opaque, size: size_t)
+		var p = realloc(p0, size)
+		return p
+	end
+	terra C.free(p: &opaque)
+		free(p)
+	end
+	return C
+end
 
 --free lists -----------------------------------------------------------------
 
@@ -580,16 +714,6 @@ low.growbuffer = memoize(function(T)
 	end
 	return growbuffer
 end)
-
---add virtual fields to structs ----------------------------------------------
-
-function low.addproperties(T)
-	local props = {}
-	T.metamethods.__entrymissing = macro(function(k, self)
-		return `[props[k]](self)
-	end)
-	return props
-end
 
 
 
