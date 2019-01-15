@@ -7,6 +7,7 @@ if not ... then require'low_test'; return; end
 local ffi = require'ffi'
 local glue = require'glue'
 local random = require'random'
+local pp = require'pp'
 
 local memoize = glue.memoize
 local update = glue.update
@@ -45,9 +46,33 @@ low[ffi.os] = true
 low.ffi = ffi
 low.low = low
 low.C = C
+low.glue = glue
+low.pp = pp
 
 --promoting to global --------------------------------------------------------
 
+--Lua
+push   = table.insert
+add    = table.insert
+pop    = table.remove
+concat = table.concat
+sort   = table.sort
+format = string.format
+traceback = debug.traceback
+yield    = coroutine.yield
+resume   = coroutine.resume
+cowrap   = coroutine.wrap
+cocreate = coroutine.create
+
+--BitOps
+bnot = bit.bnot
+shl = bit.lshift
+shr = bit.rshift
+band = bit.band
+bor = bit.bor
+xor = bit.bxor
+
+--Terra
 low.linklibrary = terralib.linklibrary
 low.overloadedfunction = terralib.overloadedfunction
 
@@ -58,25 +83,6 @@ function low.externfunction(name, T)
 end
 
 --[[
-
-Rreserved words:
-	terra escape quote import
-
-Modules:
-	terralib
-
-Types:
-	float double int8 uint8 int16 uint16 int32 uint32 int64 uint64
-	bool niltype opaque
-	int(=int32) uint=(uint32) long(=int64) intptr(=uint64) rawstring(=&int8)
-
-Constructors:
-	unpacktuple unpackstruct
-	vector vectorof global constant macro tuple symbol label
-
-Only from Terra:
-	array arrayof
-
 Type checks:
 	terralib.type
 	terralib.isfunction
@@ -107,9 +113,11 @@ Used rarely:
 	terralib.includecstring terralib.includec
 	terralib.saveobj
 	package.terrapath terralib.includepath
-	terralib.linklibrary
+	terralib.types.newstruct
 
 Not used yet:
+	terralib.linkllvm
+	terralib.linkllvmstring
 	terralib.newlist
 	terralib.loadfile
 	terralib.version
@@ -117,7 +125,6 @@ Not used yet:
 	terralib.select
 	terralib.newtarget terralib.istarget
 	terralib.terrahome
-	terralib.types.newstruct
 	terralib.systemincludes
 
 Never use:
@@ -133,25 +140,6 @@ Debugging:
 	terralib.lookupsymbol
 	terralib.lookupline
 
-Undocumented / debugging:
-	terralib.SymbolInfo
-	terralib.LineInfo
-	terralib.fulltrace
-	terralib.debuginfo
-	terralib.diagnostics terralib.newdiagnostics
-	terralib.gcdebug
-	terralib.initdebugfns
-	terralib.isdebug
-Undocumented / CUDA:
-	terralib.cudahome
-	terralib.cudalibpaths
-	terralib.cudaloaderror
-	terralib.cudatarget
-Undocumented / language extensions:
-	terralib.languageextension
-	terralib.importlanguage
-	terralib.unimportlanguages
-	terralib.runlanguage
 Undocumented / ???:
 	terralib.dumpmodule
 	terralib.types
@@ -182,23 +170,10 @@ Undocumented / ???:
 	terralib.attrload
 	terralib.defineobjects
 	terralib.newanchor
-	terralib.initcompilationunit
 	terralib.jitcompilationunit
 	terralib.target terralib.freetarget terralib.nativetarget terralib.inittarget
-	terralib.newcompilationunit terralib.freecompilationunit
-	terralib.vshome
-	terralib.isverbose
-	terralib.llvm_gcdebugmetatable
-	terralib.linkllvm
-	terralib.linkllvmstring
-	terralib.llvmversion
+	terralib.newcompilationunit terralib.initcompilationunit terralib.freecompilationunit
 	terralib.llvmsizeof
-	terralib.linkllvmimpl
-	terralib.linklibraryimpl
-	terralib.saveobjimpl
-	terralib._trees
-	terralib.__terrastate
-	Strict
 
 ]]
 
