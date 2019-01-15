@@ -9,7 +9,7 @@ local ffi = require'ffi'
 local glue = require'glue'
 local pp = require'pp'
 local random = require'random'
-local dynarray = require'dynarray'
+local arr = require'dynarray'
 local khash = require'khash'
 
 local memoize = glue.memoize
@@ -61,9 +61,10 @@ low.low = low
 low.C = C
 low.glue = glue
 low.pp = pp
-low.dynarray = dynarray
+low.arr = arr
 low.map = khash.map
 low.set = khash.set
+khash.C = C
 
 --promoting symbols to global ------------------------------------------------
 
@@ -495,7 +496,7 @@ low.tostring = macro(function(arg, outbuf, maxlen)
 		end
 	else
 		return quote
-			var out = dynarray(char)
+			var out = arr(char)
 			if out:realloc(32) then
 				var n = snprintf(out.elements, out.size, fmt, [args])
 				if n < 0 then

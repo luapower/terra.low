@@ -1,6 +1,4 @@
-
-local ffi = require'ffi'
-setfenv(1, require'globals')
+setfenv(1, require'low')
 
 local terra test_math()
 	print(floor(5.5), floor([float](5.3f)))
