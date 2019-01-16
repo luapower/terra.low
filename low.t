@@ -12,13 +12,6 @@ local random = require'random'
 local arr = require'dynarray'
 local khash = require'khash'
 
-local memoize = glue.memoize
-local update = glue.update
-local round = glue.round
-local clamp = glue.clamp
-local lerp = glue.lerp
-local binsearch = glue.binsearch
-
 --The C namespace: include() and extern() dump symbols here.
 local C = {}; setmetatable(C, C); C.__index = _G
 local low = {}; setmetatable(low, low); low.__index = C
@@ -128,17 +121,17 @@ Never use:
 
 ]]
 
-push   = table.insert
-add    = table.insert
-pop    = table.remove
-concat = table.concat
-sort   = table.sort
-format = string.format
-traceback = debug.traceback
-yield    = coroutine.yield
-resume   = coroutine.resume
-cowrap   = coroutine.wrap
-cocreate = coroutine.create
+low.push   = table.insert
+low.add    = table.insert
+low.pop    = table.remove
+low.concat = table.concat
+low.sort   = table.sort
+low.format = string.format
+low.traceback = debug.traceback
+low.yield    = coroutine.yield
+low.resume   = coroutine.resume
+low.cowrap   = coroutine.wrap
+low.cocreate = coroutine.create
 
 --[[  LuaJIT 2.1 std library use (promoted symbols not listed)
 
@@ -167,12 +160,74 @@ Never use:
 
 ]]
 
-bnot = bit.bnot
-shl = bit.lshift
-shr = bit.rshift
-band = bit.band
-bor = bit.bor
-xor = bit.bxor
+low.bnot = bit.bnot
+low.shl = bit.lshift
+low.shr = bit.rshift
+low.band = bit.band
+low.bor = bit.bor
+low.xor = bit.bxor
+
+--glue -----------------------------------------------------------------------
+
+--[[  glue use (promoted symbols not listed)
+
+Modules:
+	glue.string
+
+Used frequently:
+	glue.assert
+
+Used rarely:
+	glue.keys
+	glue.shift
+	glue.addr glue.ptr
+	glue.bin
+	glue.collect
+	glue.escape
+	glue.floor
+	glue.pcall glue.fcall glue.fpcall glue.protect
+	glue.gsplit
+	glue.inherit glue.object
+	glue.malloc glue.free
+	glue.printer
+	glue.replacefile
+	glue.fromhex glue.tohex
+	glue.tuples
+	glue.freelist glue.growbuffer
+	glue.pack glue.unpack
+
+Never used yet:
+	glue.readpipe
+	glue.reverse
+	glue.cpath glue.luapath
+
+]]
+
+low.memoize = glue.memoize --same as terralib.memoize
+
+low.update    = glue.update
+low.merge     = glue.merge
+low.attr      = glue.attr
+low.count     = glue.count
+low.index     = glue.index
+low.sortedpairs = glue.sortedpairs
+
+low.indexof   = glue.indexof
+low.append    = glue.append
+low.extend    = glue.extend
+
+low.autoload  = glue.autoload
+
+low.canopen   = glue.canopen
+low.readfile  = glue.readfile
+low.writefile = glue.writefile
+low.lines     = glue.lines
+
+low.pass = glue.pass
+low.noop = glue.noop
+
+low.starts = glue.starts
+low.trim = glue.trim
 
 --[[  Terra 1.0.0 std library use (promoted symbols not listed)
 
@@ -383,16 +438,16 @@ low.round = macro(function(x, p)
 	else
 		return `C.floor(x)
 	end
-end, round)
+end, glue.round)
 low.snap = low.round
 
 low.clamp = macro(function(x, m, M)
 	return `min(max(x, m), M)
-end, clamp)
+end, glue.clamp)
 
 low.lerp = macro(function(x, x0, x1, y0, y1)
 	return `y0 + (x-x0) * ([double](y1-y0) / (x1 - x0))
-end, lerp)
+end, glue.lerp)
 
 --binary search for an insert position that keeps the array sorted.
 local less = macro(function(t, i, v) return `t[i] <  v end)
@@ -419,7 +474,7 @@ low.binsearch = macro(function(v, t, lo, hi, cmp)
 		end
 	in i
 	end
-end, binsearch)
+end, glue.binsearch)
 
 --stdin/out/err --------------------------------------------------------------
 
