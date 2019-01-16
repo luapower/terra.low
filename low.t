@@ -66,10 +66,10 @@ low.arr = arr
 khash.C = C
 low.map = khash.map
 low.set = khash.set
-low.MAP_PRESENT = khash.PRESENT
-low.MAP_ABSENT  = khash.ABSENT
-low.MAP_DELETED = khash.DELETED
-low.MAP_ERROR   = khash.ERROR
+low.map_PRESENT = khash.PRESENT
+low.map_ABSENT  = khash.ABSENT
+low.map_DELETED = khash.DELETED
+low.map_ERROR   = khash.ERROR
 
 --promoting symbols to global ------------------------------------------------
 
