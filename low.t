@@ -1,5 +1,5 @@
 
---low: Lua+Terra standard library & flat vocabulary of tools.
+--Lua+Terra standard library & flat vocabulary of tools.
 --Written by Cosmin Apreutesei. Public domain.
 --Intended to be used global environment: setfenv(1, require'low').
 
@@ -174,10 +174,8 @@ low.xor = bit.bxor
 Modules:
 	glue.string
 
-Used frequently:
+Used:
 	glue.assert
-
-Used rarely:
 	glue.keys
 	glue.shift
 	glue.addr glue.ptr
@@ -196,7 +194,7 @@ Used rarely:
 	glue.freelist glue.growbuffer
 	glue.pack glue.unpack
 
-Never used yet:
+Not used:
 	glue.readpipe
 	glue.reverse
 	glue.cpath glue.luapath
@@ -222,9 +220,6 @@ low.canopen   = glue.canopen
 low.readfile  = glue.readfile
 low.writefile = glue.writefile
 low.lines     = glue.lines
-
-low.pass = glue.pass
-low.noop = glue.noop
 
 low.starts = glue.starts
 low.trim = glue.trim
@@ -257,6 +252,8 @@ Type checks:
 	terralib.islist
 	terralib.israwlist
 	<numeric_type>.signed
+	<numeric_type>:min()
+	<numeric_type>:max()
 	<pointer_type>.type
 
 FFI objects:
@@ -326,6 +323,9 @@ Undocumented:
 ]]
 
 low.char = int8
+low.cstring = rawstring
+low.codepoint = uint32
+
 low.linklibrary = terralib.linklibrary
 low.overload = terralib.overloadedfunction
 low.newstruct = terralib.types.newstruct
@@ -354,7 +354,7 @@ function low.includec_loaders.freetype(header) --motivating example
 	end
 end
 
-function low.I(path)
+function low.includepath(path)
 	terralib.includepath = terralib.includepath .. P(';'..path)
 end
 
@@ -390,25 +390,6 @@ include'stdlib.h'
 include'string.h'
 include'math.h'
 
---integer limits -------------------------------------------------------------
-
-local maxint = {}
-local minint = {}
-maxint[int8  ] = `[int8  ]( 0x7F)
-minint[int8  ] = `[int8  ](-0x80)
-maxint[int16 ] = `[int16 ]( 0x7FFF)
-minint[int16 ] = `[int16 ](-0x8000)
-maxint[int32 ] = `[int32 ]( 0x7FFFFFFF)
-minint[int32 ] = `[int32 ](-0x80000000)
-maxint[int64 ] = ` 0x7FFFFFFFFFFFFFFFLL
-minint[int64 ] = `-0x8000000000000000LL
-maxint[uint8 ] = `[uint8 ](0xFF)
-maxint[uint16] = `[uint16](0xFFFF)
-maxint[uint32] = `[uint32](0xFFFFFFFF)
-maxint[uint64] = ` 0xFFFFFFFFFFFFFFFFULL
-low.maxint = macro(function(T) return maxint[T:astype()] end)
-low.minint = macro(function(T) return minint[T:astype()] end)
-
 --math module ----------------------------------------------------------------
 
 low.PI    = math.pi
@@ -418,6 +399,7 @@ low.abs   = macro(function(x) return `iif(x < 0, -x, x) end, math.abs)
 low.floor = macro(function(x) return `C.floor(x) end, math.floor)
 low.ceil  = macro(function(x) return `C.ceil(x) end, math.ceil)
 low.sqrt  = macro(function(x) return `C.sqrt(x) end, math.sqrt)
+low.pow   = C.pow
 low.sin   = macro(function(x) return `C.sin(x) end, math.sin)
 low.cos   = macro(function(x) return `C.cos(x) end, math.cos)
 low.tan   = macro(function(x) return `C.tan(x) end, math.tan)
@@ -429,6 +411,8 @@ low.deg   = macro(function(r) return `r * (180.0 / PI) end, math.deg)
 low.rad   = macro(function(d) return `d * (PI / 180.0) end, math.rad)
 low.random    = random.random
 low.randomize = random.randomize
+low.inc = macro(function(lval, i) i=i or 1; return quote lval = lval + i end end)
+low.dec = macro(function(lval, i) i=i or 1; return quote lval = lval - i end end)
 
 --glue module ----------------------------------------------------------------
 
@@ -448,6 +432,9 @@ end, glue.clamp)
 low.lerp = macro(function(x, x0, x1, y0, y1)
 	return `y0 + (x-x0) * ([double](y1-y0) / (x1 - x0))
 end, glue.lerp)
+
+low.pass = macro(function(...) return ... end, glue.pass)
+low.noop = macro(function() return quote end end, glue.noop)
 
 --binary search for an insert position that keeps the array sorted.
 local less = macro(function(t, i, v) return `t[i] <  v end)
@@ -585,6 +572,7 @@ low.prf = macro(function(...)
 	return quote
 		var stdout = stdout()
 		fprintf(stdout, [args])
+		fprintf(stdout, '\n')
 		fflush(stdout)
 	end
 end)
@@ -609,15 +597,15 @@ end, print)
 
 --assert ---------------------------------------------------------------------
 
-low.assert = macro(function(e, msg)
+low.assert = macro(function(expr, msg)
 	return quote
-		if not e then
+		if not expr then
 			var stderr = stderr()
 			fprintf(stderr, [
 				'assertion failed' .. ' '
-				.. tostring(e.filename)
-				.. ':' .. tostring(e.linenumber)
-				.. ': ' .. (msg and msg:asvalue() or tostring(e)) .. '\n'
+				.. tostring(expr.filename)
+				.. ':' .. tostring(expr.linenumber)
+				.. ': ' .. (msg and msg:asvalue() or tostring(expr)) .. '\n'
 			])
 			fflush(stderr)
 			abort()
@@ -626,6 +614,7 @@ low.assert = macro(function(e, msg)
 end, assert)
 
 --clock ----------------------------------------------------------------------
+--monotonic clock (can't go back or drift) in seconds with ~1us precision.
 
 local clock
 if Windows then
@@ -636,7 +625,7 @@ if Windows then
 	local terra init()
 		var t: int64
 		assert(QueryPerformanceFrequency(&t) ~= 0)
-		inv_qpf = 1.0 / t --precission loss in e-10
+		inv_qpf = 1.0 / t --precision loss in e-10
 	end
 	clock = terra(): double
 		if inv_qpf == 0 then init() end
@@ -645,14 +634,16 @@ if Windows then
 		return [double](t) * inv_qpf
 	end
 elseif Linux then
+	--TODO: finish and test this
 	include'time.h'
 	linklibrary'rt'
 	clock = terra(): double
 		var t: timespec
 		assert(clock_gettime(CLOCK_MONOTONIC, &tp) == 0)
-		return t.s + t.ns / 1.0e9
+		return t.tv_sec + t.tv_nsec / 1.0e9
 	end
 elseif OSX then
+	--TODO: finish and test this
 	clock = terra(): double
 		return [double](mach_absolute_time())
 	end
@@ -688,26 +679,55 @@ low.fill = macro(function(lval, val, len)
 	end
 end)
 
+--default hash function ------------------------------------------------------
+
+low.hash = macro(function(size_t, k, len) --FNV-1A hash
+	size_t = size_t:astype()
+	return quote
+		var d: size_t = 0x811C9DC5
+		var k = [&int8](k)
+		for i = 0, len do
+			d = (d ^ k[i]) * 16777619
+		end
+		in d
+	end
+end)
+
+--variable-length struct -----------------------------------------------------
+
+low.VLS = macro(function(T, VT, len)
+	T = T:astype()
+	VT = VT:astype()
+	return quote
+		assert(len >= 0)
+		var v = [&T](malloc(sizeof(T) + sizeof(VT) + len))
+		memset(v, 0, sizeof(T))
+		in v
+	end
+end)
+
 --checked allocators ---------------------------------------------------------
 
 low.allocs = function()
 	local C = {}; setmetatable(C, C).__index = low.C
 	local size_t = uint64
 
-	terra C.malloc(size: size_t): &opaque
-		var p = malloc(size)
-		return p
-	end
-	terra C.calloc(n: size_t, size: size_t)
-		var p = calloc(n, size)
-		return p
-	end
 	terra C.realloc(p0: &opaque, size: size_t)
 		var p = realloc(p0, size)
+		--TODO: track memory here
+		return p
+	end
+	--the following functions are based on realloc only.
+	terra C.malloc(size: size_t): &opaque
+		return C.realloc(nil, size)
+	end
+	terra C.calloc(n: size_t, size: size_t)
+		var p = C.realloc(nil, n * size)
+		if p ~= nil then memset(p, 0, n * size) end
 		return p
 	end
 	terra C.free(p: &opaque)
-		free(p)
+		C.realloc(p, 0)
 	end
 	return C
 end
@@ -775,7 +795,5 @@ low.growbuffer = memoize(function(T)
 	end
 	return growbuffer
 end)
-
-
 
 return low
