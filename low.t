@@ -10,7 +10,7 @@ local glue = require'glue'
 local pp = require'pp'
 local random = require'random'
 local arr = require'dynarray'
-local khash = require'khash'
+local map = require'khash'
 
 --The C namespace: include() and extern() dump symbols here.
 local C = {}; setmetatable(C, C); C.__index = _G
@@ -55,14 +55,7 @@ low.C = C
 low.glue = glue
 low.pp = pp
 low.arr = arr
-
-khash.C = C
-low.map = khash.map
-low.set = khash.set
-low.map_PRESENT = khash.PRESENT
-low.map_ABSENT  = khash.ABSENT
-low.map_DELETED = khash.DELETED
-low.map_ERROR   = khash.ERROR
+low.map = map
 
 --promoting symbols to global ------------------------------------------------
 
@@ -260,7 +253,6 @@ FFI objects:
 	terralib.new
 	terralib.cast
 	terralib.typeof
-	terralib.offsetof
 
 Used rarely:
 	terralib.load terralib.loadstring terralib.loadfile
@@ -325,6 +317,7 @@ Undocumented:
 low.char = int8
 low.cstring = rawstring
 low.codepoint = uint32
+low.offsetof = terralib.offsetof
 
 low.linklibrary = terralib.linklibrary
 low.overload = terralib.overloadedfunction
@@ -602,10 +595,11 @@ low.assert = macro(function(expr, msg)
 		if not expr then
 			var stderr = stderr()
 			fprintf(stderr, [
-				'assertion failed' .. ' '
+				'assertion failed '
+				.. (msg and '('..msg:asvalue()..') ' or '')
 				.. tostring(expr.filename)
 				.. ':' .. tostring(expr.linenumber)
-				.. ': ' .. (msg and msg:asvalue() or tostring(expr)) .. '\n'
+				.. ': ' .. tostring(expr) .. '\n'
 			])
 			fflush(stderr)
 			abort()
@@ -681,10 +675,11 @@ end)
 
 --default hash function ------------------------------------------------------
 
-low.hash = macro(function(size_t, k, len) --FNV-1A hash
+low.hash = macro(function(size_t, k, len, seed) --FNV-1A hash
 	size_t = size_t:astype()
+	seed = seed or 0x811C9DC5
 	return quote
-		var d: size_t = 0x811C9DC5
+		var d: size_t = seed
 		var k = [&int8](k)
 		for i = 0, len do
 			d = (d ^ k[i]) * 16777619
@@ -692,6 +687,8 @@ low.hash = macro(function(size_t, k, len) --FNV-1A hash
 		in d
 	end
 end)
+low.hash32 = macro(function(k, len, seed) return `hash(int32, k, len, seed) end)
+low.hash64 = macro(function(k, len, seed) return `hash(int64, k, len, seed) end)
 
 --variable-length struct -----------------------------------------------------
 
