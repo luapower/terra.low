@@ -1,7 +1,7 @@
 
 --Lua+Terra standard library & flat vocabulary of tools.
 --Written by Cosmin Apreutesei. Public domain.
---Intended to be used global environment: setfenv(1, require'low').
+--Intended to be used as global environment: setfenv(1, require'low').
 
 if not ... then require'low_test'; return; end
 
