@@ -53,31 +53,3 @@ local terra test_binsearch()
 	assert(binsearch(16, a, i, j) ==  3)
 end
 test_binsearch()
-
-local terra test_freelist()
-	var fl: freelist(int32)
-	fl:alloc(10)
-	var p = fl:new()
-	assert(fl.len == 0)
-	fl:release(p)
-	assert(fl.len == 1)
-	var p2 = fl:new()
-	assert(fl.len == 0)
-	assert(p == p2)
-	fl:release(p2)
-	fl:free()
-end
-test_freelist()
-
-local terra test_growbuffer()
-	var buf: growbuffer(int)
-	buf:alloc()
-	assert(buf.data == nil)
-	do
-		var buf = buf(20)
-		assert(buf ~= nil)
-	end
-	buf:free()
-end
-test_growbuffer()
-

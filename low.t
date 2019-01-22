@@ -646,14 +646,17 @@ low.clock = macro(function() return `clock() end, terralib.currenttimeinseconds)
 
 --typed calloc ---------------------------------------------------------------
 
-low.new = macro(function(T, len)
+local calloc = macro(function(size) return `calloc(size, 1) end)
+low.new = macro(function(T, len, init)
 	len = len or 1
 	T = T:astype()
+	local alloc = (init == nil or init == true) and calloc or malloc
 	return quote
-		var len: int = [len]
+		var len: uint64 = [len]
 		assert(len >= 0)
-		var p: &T = [&T](calloc(len, sizeof(T)))
-	in	p
+		var p: &T
+		if len == 0 then p = nil else p = [&T](alloc(len * sizeof(T))) end
+		in	p
 	end
 end)
 
@@ -671,6 +674,14 @@ low.fill = macro(function(lval, val, len)
 		memset(lval, val, size * len)
 		in lval
 	end
+end)
+
+--typed memmove --------------------------------------------------------------
+
+low.copy = macro(function(dst, src, len)
+	local T = dst:gettype().type
+	assert(T == src:gettype().type)
+	return quote memmove(dst, src, len * sizeof(T)) in dst end
 end)
 
 --default hash function ------------------------------------------------------
@@ -728,69 +739,5 @@ low.allocs = function()
 	end
 	return C
 end
-
---free lists -----------------------------------------------------------------
-
-low.freelist = memoize(function(T)
-	local freelist = struct {
-		data: &&T;
-		size: int;
-		len: int;
-	}
-	terra freelist:alloc(size: int)
-		self.data = new([&T], size)
-		self.size = size
-		self.len = 0
-	end
-	terra freelist:free()
-		for i=0,self.len do
-			free(self.data[i])
-		end
-		free(self.data)
-		fill(self)
-	end
-	terra freelist:new()
-		if self.len > 0 then
-			self.len = self.len - 1
-			fill(self.data[self.len])
-			return self.data[self.len]
-		else
-			return new(T)
-		end
-	end
-	terra freelist:release(p: &T)
-		if self.len < self.size then
-			self.data[self.len] = p
-			self.len = self.len + 1
-		else
-			free(p)
-		end
-	end
-	return freelist
-end)
-
---ever-growing buffer --------------------------------------------------------
-
-low.growbuffer = memoize(function(T)
-	local growbuffer = struct {
-		data: &T;
-		size: int;
-	}
-	terra growbuffer:alloc()
-		fill(self)
-	end
-	terra growbuffer:free()
-		free(self.data)
-		fill(self)
-	end
-	terra growbuffer.metamethods.__apply(self: &growbuffer, size: int)
-		if self.size < size then
-			self.data = new(T, size)
-			self.size = size
-		end
-		return self.data
-	end
-	return growbuffer
-end)
 
 return low
