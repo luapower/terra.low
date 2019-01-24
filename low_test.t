@@ -53,3 +53,19 @@ local terra test_binsearch()
 	assert(binsearch(16, a, i, j) ==  3)
 end
 test_binsearch()
+
+local terra test_freelist()
+	var fl: freelist(int32) = nil
+	var p = fl:alloc()
+	assert(fl.items.len == 0)
+	fl:release(p)
+	assert(fl.items.len == 1)
+	var p2 = fl:alloc()
+	assert(fl.items.len == 0)
+	assert(p == p2)
+	fl:release(p2)
+	assert(fl.items.len == 1)
+	fl:free()
+	assert(fl.items.len == 0)
+end
+test_freelist()

@@ -315,6 +315,8 @@ Undocumented:
 ]]
 
 low.char = int8
+low.enum = int8
+low.num = double --Lua-compat type
 low.cstring = rawstring
 low.codepoint = uint32
 low.offsetof = terralib.offsetof
@@ -404,8 +406,11 @@ low.deg   = macro(function(r) return `r * (180.0 / PI) end, math.deg)
 low.rad   = macro(function(d) return `d * (PI / 180.0) end, math.rad)
 low.random    = random.random
 low.randomize = random.randomize
-low.inc = macro(function(lval, i) i=i or 1; return quote lval = lval + i end end)
-low.dec = macro(function(lval, i) i=i or 1; return quote lval = lval - i end end)
+--go full Pascal :)
+low.inc  = macro(function(lval, i) i=i or 1; return quote lval = lval + i in lval end end)
+low.dec  = macro(function(lval, i) i=i or 1; return quote lval = lval - i in lval end end)
+low.odd  = macro(function(x) return `(x and 1) == 1 end)
+low.even = macro(function(x) return `(x and 1) == 0 end)
 
 --glue module ----------------------------------------------------------------
 
@@ -644,19 +649,25 @@ elseif OSX then
 end
 low.clock = macro(function() return `clock() end, terralib.currenttimeinseconds)
 
---typed calloc ---------------------------------------------------------------
+--typed m/calloc -------------------------------------------------------------
 
-local calloc = macro(function(size) return `calloc(size, 1) end)
-low.new = macro(function(T, len, init)
+low.alloc = macro(function(T, len)
 	len = len or 1
 	T = T:astype()
-	local alloc = (init == nil or init == true) and calloc or malloc
 	return quote
-		var len: uint64 = [len]
 		assert(len >= 0)
-		var p: &T
-		if len == 0 then p = nil else p = [&T](alloc(len * sizeof(T))) end
-		in	p
+		var p = iif(len > 0, [&T](malloc(len * sizeof(T))), nil)
+		in p
+	end
+end)
+
+low.new = macro(function(T, len)
+	len = len or 1
+	T = T:astype()
+	return quote
+		assert(len >= 0)
+		var p = iif(len > 0, [&T](calloc(len, sizeof(T))), nil)
+		in p
 	end
 end)
 
@@ -700,6 +711,43 @@ low.hash = macro(function(size_t, k, len, seed) --FNV-1A hash
 end)
 low.hash32 = macro(function(k, len, seed) return `hash(int32, k, len, seed) end)
 low.hash64 = macro(function(k, len, seed) return `hash(int64, k, len, seed) end)
+
+--freelist -------------------------------------------------------------------
+
+low.freelist = memoize(function(T)
+	local freelist = struct {
+		items: arr(&T);
+	}
+	function freelist.metamethods.__cast(from, to, exp)
+		if from == niltype or from:isunit() then
+			return `freelist {items=nil}
+		else
+			error'invalid cast'
+		end
+	end
+	terra freelist:free()
+		for i,p in self.items do
+			free(@p)
+		end
+		self.items:free()
+	end
+	terra freelist:alloc()
+		if self.items.len > 0 then
+			return self.items:pop()
+		else
+			return new(T)
+		end
+	end
+	terra freelist:new()
+		var p = self:alloc()
+		return iif(p ~= nil, fill(p), nil)
+	end
+	terra freelist:release(p: &T)
+		var i = self.items:push(p)
+		if i == -1 then free(p) end
+	end
+	return freelist
+end)
 
 --variable-length struct -----------------------------------------------------
 
