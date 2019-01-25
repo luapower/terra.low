@@ -418,7 +418,7 @@ low.round = macro(function(x, p)
 	if p and p ~= 1 then
 		return `C.floor(x / p + .5) * p
 	else
-		return `C.floor(x)
+		return `C.floor(x + .5)
 	end
 end, glue.round)
 low.snap = low.round
@@ -735,7 +735,7 @@ low.freelist = memoize(function(T)
 		if self.items.len > 0 then
 			return self.items:pop()
 		else
-			return new(T)
+			return alloc(T)
 		end
 	end
 	terra freelist:new()
