@@ -764,43 +764,4 @@ low.freelist = memoize(function(T)
 	return freelist
 end)
 
---variable-length struct -----------------------------------------------------
-
-low.VLS = macro(function(T, VT, len)
-	T = T:astype()
-	VT = VT:astype()
-	return quote
-		assert(len >= 0)
-		var v = [&T](malloc(sizeof(T) + sizeof(VT) + len))
-		memset(v, 0, sizeof(T))
-		in v
-	end
-end)
-
---checked allocators ---------------------------------------------------------
-
-low.allocs = function()
-	local C = {}; setmetatable(C, C).__index = low.C
-	local size_t = uint64
-
-	terra C.realloc(p0: &opaque, size: size_t)
-		var p = realloc(p0, size)
-		--TODO: track memory here
-		return p
-	end
-	--the following functions are based on realloc only.
-	terra C.malloc(size: size_t): &opaque
-		return C.realloc(nil, size)
-	end
-	terra C.calloc(n: size_t, size: size_t)
-		var p = C.realloc(nil, n * size)
-		if p ~= nil then memset(p, 0, n * size) end
-		return p
-	end
-	terra C.free(p: &opaque)
-		C.realloc(p, 0)
-	end
-	return C
-end
-
 return low
