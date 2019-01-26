@@ -210,7 +210,6 @@ low.extend    = glue.extend
 low.autoload  = glue.autoload
 
 low.canopen   = glue.canopen
-low.readfile  = glue.readfile
 low.writefile = glue.writefile
 low.lines     = glue.lines
 
@@ -702,6 +701,31 @@ low.hash = macro(function(size_t, k, len, seed) --FNV-1A hash
 end)
 low.hash32 = macro(function(k, len, seed) return `hash(int32, k, len, seed) end)
 low.hash64 = macro(function(k, len, seed) return `hash(int64, k, len, seed) end)
+
+--readfile -------------------------------------------------------------------
+
+local terra readfile(name: cstring): {&opaque, int64}
+	var f = fopen(name, 'rb')
+	if f ~= nil then
+		if fseek(f, 0, SEEK_END) == 0 then
+			var filesize = ftell(f)
+			if filesize > 0 then
+				rewind(f)
+				var out = [&opaque](new(uint8, filesize))
+				if out ~= nil then
+					if fread(out, 1, filesize, f) == filesize then
+						fclose(f)
+						return out, filesize
+					end
+					free(out)
+				end
+			end
+		end
+		fclose(f)
+	end
+	return nil, 0
+end
+low.readfile = macro(function(name) return `readfile(name) end, glue.readfile)
 
 --freelist -------------------------------------------------------------------
 
