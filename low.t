@@ -338,16 +338,7 @@ package.path = package.path .. P'$L/bin/$P/lua/?.lua;$L/?.lua;$L/?/init.lua'
 package.cpath = package.cpath .. P';$L/bin/mingw64/clib/?.dll'
 package.terrapath = package.terrapath .. P'$L/?.t;$L/?/init.t'
 
-low.includec_loaders = {}
-
-function low.includec_loaders.freetype(header) --motivating example
-	local header = header:match'^freetype/(.*)'
-	if header then
-		return terralib.includecstring([[
-			#include "ft2build.h"
-			#include FT_]]..(header:upper():gsub('%.', '_')))
-	end
-end
+low.includec_loaders = {} --{name -> loader(header_name)}
 
 function low.includepath(path)
 	terralib.includepath = terralib.includepath .. P(';'..path)
