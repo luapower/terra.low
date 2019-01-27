@@ -55,7 +55,7 @@ end
 test_binsearch()
 
 local terra test_freelist()
-	var fl: freelist(int32) = nil
+	var fl: freelist(int32); fl:init()
 	var p = fl:alloc()
 	assert(fl.items.len == 0)
 	fl:release(p)

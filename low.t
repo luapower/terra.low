@@ -477,7 +477,7 @@ end)
 
 --tostring -------------------------------------------------------------------
 
-local function format_arg(arg, fmt, args, freelist)
+local function format_arg(arg, fmt, args, freelist, indent)
 	local t = arg:gettype()
 		 if t == &int8    then add(fmt, '%s'   ); add(args, arg)
 	elseif t == int8     then add(fmt, '%d'   ); add(args, arg)
@@ -494,22 +494,25 @@ local function format_arg(arg, fmt, args, freelist)
 	elseif t:isarray() then
 		add(fmt, '[')
 		for i=0,t.N-1 do
-			format_arg(`arg[i], fmt, args, freelist)
+			format_arg(`arg[i], fmt, args, freelist, indent+1)
 			if i < t.N-1 then add(fmt, ',') end
 		end
 		add(fmt, ']')
 	elseif t:isstruct() then
 		local __tostring = t.metamethods.__tostring
 		if __tostring then
-			__tostring(arg, format_arg, fmt, args, freelist)
+			__tostring(arg, format_arg, fmt, args, freelist, indent)
 		else
-			add(fmt, tostring(t)..'{')
+			add(fmt, tostring(t)..' {')
 			local layout = t:getlayout()
 			for i,e in ipairs(layout.entries) do
-				add(fmt, e.key..'=')
-				format_arg(`arg.[e.key], fmt, args, freelist)
-				if i < #layout.entries then add(fmt, ',') end
+				add(fmt, '\n')
+				add(fmt, ('   '):rep(indent+1))
+				add(fmt, e.key..' = ')
+				format_arg(`arg.[e.key], fmt, args, freelist, indent+1)
 			end
+			add(fmt, '\n')
+			add(fmt, ('   '):rep(indent))
 			add(fmt, '}')
 		end
 	elseif t:isfunction() then
@@ -521,7 +524,7 @@ end
 
 low.tostring = macro(function(arg, outbuf, maxlen)
 	local fmt, args, freelist = {}, {}, {}
-	format_arg(arg, fmt, args, freelist)
+	format_arg(arg, fmt, args, freelist, 0)
 	fmt = concat(fmt)
 	local snprintf = Windows and _snprintf or snprintf
 	if outbuf then
@@ -553,9 +556,9 @@ low.tostring = macro(function(arg, outbuf, maxlen)
 	end
 end, tostring)
 
---Lua-style print ------------------------------------------------------------
+--flushed printf -------------------------------------------------------------
 
-low.prf = macro(function(...)
+low.pfn = macro(function(...)
 	local args = {...}
 	return quote
 		var stdout = stdout()
@@ -565,12 +568,23 @@ low.prf = macro(function(...)
 	end
 end)
 
+low.pf = macro(function(...)
+	local args = {...}
+	return quote
+		var stdout = stdout()
+		fprintf(stdout, [args])
+		fflush(stdout)
+	end
+end)
+
+--Lua-style print ------------------------------------------------------------
+
 low.print = macro(function(...)
 	local fmt, args, freelist = {}, {}, {}
 	local n = select('#', ...)
 	for i=1,n do
 		local arg = select(i, ...)
-		format_arg(arg, fmt, args, freelist)
+		format_arg(arg, fmt, args, freelist, 0)
 		add(fmt, i < n and '\t' or nil)
 	end
 	fmt = concat(fmt)
@@ -733,12 +747,8 @@ low.freelist = memoize(function(T)
 	local freelist = struct {
 		items: arr(&T);
 	}
-	function freelist.metamethods.__cast(from, to, exp)
-		if from == niltype or from:isunit() then
-			return `freelist {items=nil}
-		else
-			error'invalid cast'
-		end
+	terra freelist:init()
+		self.items:init()
 	end
 	terra freelist:free()
 		for i,p in self.items do
