@@ -62,10 +62,7 @@ low.map = map
 --[[  Lua 5.1 std library use (promoted symbols not listed)
 
 TODO:
-	assert with format		glue.assert
-	print with format			print(format(...))
 	pcall with traceback		glue.pcall
-	append -> add
 
 Modules:
 	table math io os string debug coroutine package
@@ -76,7 +73,7 @@ Used:
 	next pairs ipairs
 	print
 	pcall xpcall error assert
-	select unpack
+	select
 	require load loadstring loadfile dofile
 	setfenv getfenv
 	s:rep s:sub s:upper s:lower
@@ -168,14 +165,14 @@ Modules:
 	glue.string
 
 Used:
-	glue.assert
+	glue.map
 	glue.keys
 	glue.shift
 	glue.addr glue.ptr
 	glue.bin
 	glue.collect
-	glue.escape
-	glue.floor
+	glue.esc
+	glue.floor glue.ceil
 	glue.pcall glue.fcall glue.fpcall glue.protect
 	glue.gsplit
 	glue.inherit glue.object
@@ -183,9 +180,7 @@ Used:
 	glue.printer
 	glue.replacefile
 	glue.fromhex glue.tohex
-	glue.tuples
 	glue.freelist glue.growbuffer
-	glue.pack glue.unpack
 
 Not used:
 	glue.readpipe
@@ -213,13 +208,16 @@ low.canopen   = glue.canopen
 low.writefile = glue.writefile
 low.lines     = glue.lines
 
-low.starts = glue.starts
-low.trim = glue.trim
+low.pack   = glue.pack
+low.unpack = glue.unpack
+
+string.starts = glue.starts
+string.trim   = glue.trim
 
 --[[  Terra 1.0.0 std library use (promoted symbols not listed)
 
 Used:
-	terra quote escape struct
+	terra macro quote escape struct var
 	global constant
 	(u)int8|16|32|64 int long float double bool niltype opaque rawstring ptrdiff
 	sizeof
@@ -286,7 +284,6 @@ Undocumented:
 	terralib.registerinternalizedfiles
 	terralib.bindtoluaapi
 	terralib.internalmacro
-	terralib.printraw
 	terralib.kinds
 	terralib.definequote terralib.newquote
 	terralib.anonfunction
@@ -313,6 +310,8 @@ Undocumented:
 
 ]]
 
+low.type = terralib.type
+
 low.char = int8
 low.enum = int8
 low.num = double --Lua-compat type
@@ -320,6 +319,7 @@ low.cstring = rawstring
 low.codepoint = uint32
 low.offsetof = terralib.offsetof
 
+pr = terralib.printraw
 low.linklibrary = terralib.linklibrary
 low.overload = terralib.overloadedfunction
 low.newstruct = terralib.types.newstruct
@@ -402,7 +402,7 @@ low.dec  = macro(function(lval, i) i=i or 1; return quote lval = lval - i in lva
 low.odd  = macro(function(x) return `(x and 1) == 1 end)
 low.even = macro(function(x) return `(x and 1) == 0 end)
 
---glue module ----------------------------------------------------------------
+--math from glue -------------------------------------------------------------
 
 low.round = macro(function(x, p)
 	if p and p ~= 1 then
@@ -452,6 +452,9 @@ low.binsearch = macro(function(v, t, lo, hi, cmp)
 end, glue.binsearch)
 
 --stdin/out/err --------------------------------------------------------------
+
+--NOTE: we need to open new handles for these since Terra can't see the C
+--global ones from stdio.h
 
 local _stdin  = global(&_iobuf, nil)
 local _stdout = global(&_iobuf, nil)
@@ -566,6 +569,9 @@ low.pfn = macro(function(...)
 		fprintf(stdout, '\n')
 		fflush(stdout)
 	end
+end, function(...)
+	print(string.format(...))
+	io.stdout:flush()
 end)
 
 low.pf = macro(function(...)
@@ -575,6 +581,9 @@ low.pf = macro(function(...)
 		fprintf(stdout, [args])
 		fflush(stdout)
 	end
+end, function(...)
+	io.stdout:write(string.format(...))
+	io.stdout:flush()
 end)
 
 --Lua-style print ------------------------------------------------------------
@@ -595,7 +604,10 @@ low.print = macro(function(...)
 		fflush(stdout)
 		[ freelist ]
 	end
-end, print)
+end, function(...)
+	_G.print(...)
+	io.stdout:flush()
+end)
 
 --assert ---------------------------------------------------------------------
 
@@ -614,7 +626,12 @@ low.assert = macro(function(expr, msg)
 			abort()
 		end
 	end
-end, assert)
+end, function(v, ...)
+	if v then return v end
+	return concat(glue.map(pack(...), tostring))
+end)
+
+low.assertf = glue.assert
 
 --clock ----------------------------------------------------------------------
 --monotonic clock (can't go back or drift) in seconds with ~1us precision.
