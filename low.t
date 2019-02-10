@@ -629,7 +629,7 @@ low.assert = macro(function(expr, msg)
 end, function(v, ...)
 	if v then return v end
 	local t=pack(...); for i=1,t.n do t[i]=tostring(t[i]) end
-	error(concat(t))
+	error(concat(t), 2)
 end)
 
 low.assertf = glue.assert
