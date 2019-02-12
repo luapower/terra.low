@@ -69,3 +69,9 @@ local terra test_freelist()
 	assert(fl.items.len == 0)
 end
 test_freelist()
+
+local terra terra_clock()
+	return clock()
+end
+local t0 = terra_clock()
+print(clock() - t0)

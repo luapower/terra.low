@@ -370,6 +370,7 @@ end
 
 --stdlib dependencies --------------------------------------------------------
 
+--TODO: manually type only what we use from these.
 include'stdio.h'
 include'stdlib.h'
 include'string.h'
@@ -651,7 +652,7 @@ if Windows then
 	clock = terra(): double
 		if inv_qpf == 0 then init() end
 		var t: int64
-		assert(C.QueryPerformanceCounter(&t) ~= 0)
+		assert(QueryPerformanceCounter(&t) ~= 0)
 		return [double](t) * inv_qpf
 	end
 elseif Linux then
@@ -669,7 +670,7 @@ elseif OSX then
 		return [double](mach_absolute_time())
 	end
 end
-low.clock = macro(function() return `clock() end, terralib.currenttimeinseconds)
+low.clock = macro(clock, terralib.currenttimeinseconds)
 
 --typed m/calloc -------------------------------------------------------------
 
