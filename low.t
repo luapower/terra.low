@@ -541,16 +541,16 @@ low.tostring = macro(function(arg, outbuf, maxlen)
 		return quote
 			var out = arr(char)
 			if out:resize(32) then
-				var n = snprintf(out.elements, out.size, fmt, [args])
+				var n = snprintf(out.elements, out.capacity, fmt, [args])
 				if n < 0 then
 					out:free()
-				elseif n < out.size then
+				elseif n < out.capacity then
 					out.len = n+1
 				else
 					if not out:resize(n+1) then
 						out:free()
 					else
-						assert(snprintf(out.elements, out.size, fmt, [args]) == n)
+						assert(snprintf(out.elements, out.capacity, fmt, [args]) == n)
 						out.len = n+1
 					end
 				end
