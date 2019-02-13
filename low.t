@@ -112,8 +112,9 @@ Never use:
 ]]
 
 low.push   = table.insert
-low.add    = table.insert
 low.pop    = table.remove
+low.add    = table.insert
+low.insert = table.insert
 low.concat = table.concat
 low.sort   = table.sort
 low.format = string.format
@@ -400,8 +401,8 @@ low.randomize = random.randomize
 --go full Pascal :)
 low.inc  = macro(function(lval, i) i=i or 1; return quote lval = lval + i in lval end end)
 low.dec  = macro(function(lval, i) i=i or 1; return quote lval = lval - i in lval end end)
-low.odd  = macro(function(x) return `(x and 1) == 1 end)
-low.even = macro(function(x) return `(x and 1) == 0 end)
+low.isodd  = macro(function(x) return `x % 2 == 1 end)
+low.iseven = macro(function(x) return `x % 2 == 0 end)
 
 --math from glue -------------------------------------------------------------
 
@@ -629,6 +630,7 @@ low.assert = macro(function(expr, msg)
 	end
 end, function(v, ...)
 	if v then return v end
+	if not ... then error('assertion failed', 2) end
 	local t=pack(...); for i=1,t.n do t[i]=tostring(t[i]) end
 	error(concat(t), 2)
 end)
