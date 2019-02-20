@@ -16,9 +16,6 @@ local map = require'khash'
 local C = {}; setmetatable(C, C); C.__index = _G
 local low = {}; setmetatable(low, low); low.__index = C
 
---TODO: remove these pending terra fix.
-Strict.__newindex, Strict.__index = nil, nil
-
 setfenv(1, low)
 
 --ternary operator -----------------------------------------------------------
@@ -33,6 +30,7 @@ end)
 function low.addproperties(T)
 	local props = {}
 	T.metamethods.__entrymissing = macro(function(k, self)
+		local prop = assert(props[k], 'property missing: ', k)
 		return `[props[k]](self)
 	end)
 	return props
@@ -403,6 +401,9 @@ low.inc  = macro(function(lval, i) i=i or 1; return quote lval = lval + i in lva
 low.dec  = macro(function(lval, i) i=i or 1; return quote lval = lval - i in lval end end)
 low.isodd  = macro(function(x) return `x % 2 == 1 end)
 low.iseven = macro(function(x) return `x % 2 == 0 end)
+low.isnan  = macro(function(x) return `x ~= x end)
+low.inf  = 1/0
+low.nan  = 0/0
 
 --math from glue -------------------------------------------------------------
 
@@ -423,7 +424,7 @@ low.lerp = macro(function(x, x0, x1, y0, y1)
 	return `y0 + (x-x0) * ([double](y1-y0) / (x1 - x0))
 end, glue.lerp)
 
-low.pass = macro(function(...) return ... end, glue.pass)
+low.pass = macro(glue.pass, glue.pass)
 low.noop = macro(function() return quote end end, glue.noop)
 
 --binary search for an insert position that keeps the array sorted.
