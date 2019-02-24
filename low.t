@@ -317,8 +317,7 @@ string.trim   = glue.trim
 --[[  Terra 1.0.0 std library use (promoted symbols not listed)
 
 Used:
-	terra macro quote escape struct var
-	global constant
+	terra macro quote escape struct var global constant tuple arrayof
 	(u)int8|16|32|64 int long float double bool niltype opaque rawstring ptrdiff
 	sizeof unpacktuple unpackstruct
 	import
@@ -327,7 +326,6 @@ Not used:
 	unit(=:isunit, ={})
 
 Type checks:
-	terralib.type
 	terralib.isfunction
 	terralib.isoverloadedfunction
 	terralib.isintegral
@@ -923,7 +921,7 @@ function low.function_cdef(f, type_name, method_name)
 	local name = type_name and type_name..'_'..method_name or f.name
 	return getcstring(t.returntype)..' '..name..'('..pa..');', name
 end
-function low.methods_cdef(T, saveobj_table)
+function low.methods_cdef(T, saveobj_table, publish)
 	local function cmp(k1, k2)
 		local d1 = T.methods[k1].definition
 		local d2 = T.methods[k2].definition
@@ -936,7 +934,7 @@ function low.methods_cdef(T, saveobj_table)
 	local t = {'\n--'..T.name..' methods', 'ffi.cdef[['}
 	local kt = {}
 	for name, m in sortedpairs(T.methods, cmp) do
-		if not name:starts'_' then --skip private methods
+		if not publish or publish(T, name) then
 			local cdef, cname = function_cdef(m, T.name, name)
 			add(t, cdef)
 			add(kt, '\t'..name:gsub('.-%.', '')..' = C.'..cname..',\n')
@@ -950,11 +948,17 @@ function low.methods_cdef(T, saveobj_table)
 end
 function low.compile_module(conf)
 	local name = assert(conf.name, 'module name missing')
+	local publish = conf.publish
+	if type(publish) == 'table' then
+		publish = function(T, name)
+			return conf.publish[T] and conf.publish[T][name]
+		end
+	end
 	local saveobj_table = {}
 	local method_cdefs = {}
 	if conf.types then
 		for _,T in ipairs(conf.types) do
-			add(method_cdefs, methods_cdef(T, saveobj_table))
+			add(method_cdefs, methods_cdef(T, saveobj_table, conf.publish))
 		end
 	end
 	local type_cdefs = end_capture_cdef()
