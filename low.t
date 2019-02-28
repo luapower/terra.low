@@ -916,7 +916,7 @@ function low.publish(modulename)
 		local mdefs = {}
 
 		add(tdefs, "local ffi = require'ffi'\n")
-		add(tdefs, "local C = ffi.load'"..modulename.."'\n")
+		add(tdefs, "local C = ffi.load'"..modulename.."_h'\n")
 		add(tdefs, 'ffi.cdef[[\n')
 
 		local ctype
@@ -1099,7 +1099,7 @@ function low.publish(modulename)
 	end
 
 	function self:savebinding()
-		local filename = modulename .. '.lua'
+		local filename = modulename .. '_h.lua'
 		writefile(filename, self:bindingcode(), nil, filename..'.tmp')
 	end
 
