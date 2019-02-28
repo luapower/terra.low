@@ -916,7 +916,7 @@ function low.publish(modulename)
 		local mdefs = {}
 
 		add(tdefs, "local ffi = require'ffi'\n")
-		add(tdefs, "local C = ffi.load'"..modulename.."_h'\n")
+		add(tdefs, "local C = ffi.load'"..modulename.."'\n")
 		add(tdefs, 'ffi.cdef[[\n')
 
 		local ctype
@@ -1037,7 +1037,7 @@ function low.publish(modulename)
 			saveobj_table[name] = func
 		end
 
-		local function cdef_methods(T, filter_methods)
+		local function cdef_methods(T)
 			local function cmp(k1, k2) --declare methods in source code order
 				local d1 = T.methods[k1].definition
 				local d2 = T.methods[k2].definition
@@ -1047,10 +1047,11 @@ function low.publish(modulename)
 					return d1.filename < d2.filename
 				end
 			end
+			local ispublic = T.metamethods.__ismethodpublic
 			local name = typename(T)
 			local mdefs1 = {}
 			for fname, func in sortedpairs(T.methods, cmp) do
-				if not filter_methods or filter_methods(T, fname) then
+				if not ispublic or ispublic(T, fname) then
 					local cname = name..'_'..fname
 					cdef_function(func, cname)
 					add(mdefs1, '\t'..fname..' = C.'..cname..',\n')
@@ -1128,10 +1129,11 @@ function low.publish(modulename)
 		os.execute(cmd)
 	end
 
-	function self:build(linkto)
+	function self:build(opt)
+		opt = opt or {}
 		self:savebinding()
 		self:saveobj()
-		self:linkobj()
+		self:linkobj(opt.linkto)
 		self:removeobj()
 	end
 
