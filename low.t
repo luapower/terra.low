@@ -1140,19 +1140,25 @@ end
 
 --expand terra's unpacktuple() to work with plain cdata structs.
 local function createunpack(terraunpack)
-	return macro(terraunpack.fromterra, function(cdata)
+	return terralib.internalmacro(terraunpack.fromterra, function(cdata, i, j)
 		if type(cdata) == 'cdata' and not terralib.typeof(cdata) then
 			local refct = ffi_reflect.typeof(cdata)
 			if refct.what == 'struct' then
-				local t, i = {}, 1
+				local t = {}
+				i = i or 1
+				j = j or 1/0
+				local k = 1
 				for refct in refct:members() do
-					t[i] = cdata[refct.name]
-					i = i + 1
+					if k > j then break end
+					if k >= i then
+						t[k-i+1] = cdata[refct.name]
+					end
+					k = k + 1
 				end
-				return unpack(t, 1, i-1)
+				return unpack(t, 1, k-i)
 			end
 		end
-		return terraunpack.fromlua(cdata)
+		return terraunpack.fromlua(cdata, i, j)
 	end)
 end
 low.unpackstruct = createunpack(terralib.unpackstruct)

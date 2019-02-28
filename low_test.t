@@ -119,7 +119,7 @@ local function test_publish()
 	local p = require'publish_test'
 	local s = ffi.new'S'
 	local r = s:f({3, 4}, {5, 6, {true, true}})
-	local a, b, c = unpacktuple(r)
+	local a, b, c = unpacktuple(r) --using our version of unpacktuple()
 	assert(a == 7)
 	assert(b == 11)
 	assert(c == true)
