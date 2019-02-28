@@ -75,3 +75,53 @@ local terra terra_clock()
 end
 local t0 = terra_clock()
 print(clock() - t0)
+
+local function test_publish()
+	local public = publish'publish_test'
+
+	local anon = struct {
+		c: rawstring;
+		d: float;
+	};
+	anon.metamethods.__typename_ffi = function() return 'ANON' end
+	public(anon)
+	struct S (public) {
+		x: int;
+		union {
+			a: &&&S;
+			union {
+				b: &opaque;
+				s1: anon;
+				s2: anon;
+			};
+		};
+		y: double;
+	}
+	gettersandsetters(S)
+
+	terra f(x: anon): S end; public(f)
+	terra g(x: &opaque, s: cstring, b: bool) end; public(g)
+
+	local bool2 = tuple(bool, bool)
+	terra S:f(x: {int, int}, y: {int8, int8, bool2}): {num, num, bool}
+		return
+			x._0 + x._1,
+			y._0 + y._1,
+			y._2._0 and y._2._1
+	end
+	local whoa = {bool, int} -> {bool2, int, S}
+	terra S:g(z: whoa): S end
+
+	public:build()
+
+	--print(public:bindingcode())
+
+	local p = require'publish_test'
+	local s = ffi.new'S'
+	local r = s:f({3, 4}, {5, 6, {true, true}})
+	local a, b, c = unpacktuple(r)
+	assert(a == 7)
+	assert(b == 11)
+	assert(c == true)
+end
+test_publish()
