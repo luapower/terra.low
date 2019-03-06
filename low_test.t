@@ -55,18 +55,13 @@ end
 test_binsearch()
 
 local terra test_freelist()
-	var fl: freelist(int32); fl:init()
+	var fl: freelist(int64); fl:init()
 	var p = fl:alloc()
-	assert(fl.items.len == 0)
 	fl:release(p)
-	assert(fl.items.len == 1)
 	var p2 = fl:alloc()
-	assert(fl.items.len == 0)
 	assert(p == p2)
 	fl:release(p2)
-	assert(fl.items.len == 1)
 	fl:free()
-	assert(fl.items.len == 0)
 end
 test_freelist()
 
@@ -116,14 +111,11 @@ local function test_publish()
 
 	--print(public:bindingcode())
 
-	local p = require'publish_test'
+	local p = require'publish_test_h'
 	local s = ffi.new'S'
 	local r = s:f({3, 4}, {5, 6, {true, true}})
-	assert(select('#', unpacktuple(r)) == 3)
-	assert(select('#', unpacktuple(r, 2, 3)) == 2)
-	local a, b, c = unpacktuple(r) --using our version of unpacktuple()
-	assert(a == 7)
-	assert(b == 11)
-	assert(c == true)
+	assert(r._0 == 7)
+	assert(r._1 == 11)
+	assert(r._2 == true)
 end
 test_publish()

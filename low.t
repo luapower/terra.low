@@ -31,91 +31,6 @@ low.iif = macro(function(cond, t, f)
 	return quote var v: t:gettype(); if cond then v = t else v = f end in v end
 end)
 
---struct packing constructor -------------------------------------------------
-
-local function entry_size(e)
-	if e.type then
-		return sizeof(e.type)
-	else --union
-		local size = 0
-		for _,e in ipairs(e) do
-			size = max(size, entry_size(e))
-		end
-		return size
-	end
-end
-function low.packstruct(T)
-	sort(T.entries, function(e1, e2)
-		return entry_size(e1) > entry_size(e2)
-	end)
-end
-
---add virtual fields to structs ----------------------------------------------
-
-function low.addproperties(T)
-	local props = {}
-	T.metamethods.__entrymissing = macro(function(k, self)
-		local prop = assert(props[k], 'property missing: ', k)
-		return `[props[k]](self)
-	end)
-	return props
-end
-
---activate getters and setters in structs ------------------------------------
-
-function low.gettersandsetters(T)
-	T.metamethods.__entrymissing = macro(function(name, obj)
-		if T.methods['get_'..name] then
-			return `obj:['get_'..name]()
-		end
-	end)
-	T.metamethods.__setentry = macro(function(name, obj, rhs)
-		if T.methods['set_'..name] then
-			return quote obj:['set_'..name](rhs) end
-		end
-	end)
-end
-
---lazy method publishing pattern for containers ------------------------------
---workaround for terra issue #348.
-
-function low.addmethods(T, addmethods_func)
-
-	local function addmethods()
-		addmethods = noop
-		addmethods_func()
-	end
-
-	function T.metamethods.__getmethod(self, name)
-		addmethods()
-		return self.methods[name]
-	end
-
-	--in case meta-code tries to look up a method in T.methods ...
-	local mt = {}; setmetatable(T.methods, mt)
-	function mt:__index(name)
-		addmethods()
-		mt.__index = nil
-		return self[name]
-	end
-end
-
---wrapping opaque structs declared in C headers ------------------------------
---workaround for terra issue #351.
-
-function low.wrapopaque(T)
-	T.metamethods.__getentries = function() return {} end
-	return T
-end
-
---auto init/free struct members ----------------------------------------------
-
---NOTE: this needs field annotations so we can mark owned fields and only
---init/free those.
-function low.initfreefields(T)
-	--
-end
-
 --OS defines -----------------------------------------------------------------
 
 low.Windows = false
@@ -164,7 +79,6 @@ Used:
 	os.difftime os.date os.time
 	arg _G
 	collectgarbage newproxy
-	math.log
 	s:reverse s:dump s:format(=string.format)
 	coroutine.status coroutine.running
 	debug.getinfo
@@ -405,6 +319,119 @@ function low.istuple(T)
 	return type(T) == 'terratype' and T.convertible == 'tuple'
 end
 
+--struct packing constructor -------------------------------------------------
+
+local function entry_size(e)
+	if e.type then
+		return sizeof(e.type)
+	else --union
+		local size = 0
+		for _,e in ipairs(e) do
+			size = max(size, entry_size(e))
+		end
+		return size
+	end
+end
+function low.packstruct(T)
+	sort(T.entries, function(e1, e2)
+		return entry_size(e1) > entry_size(e2)
+	end)
+end
+
+--extensible struct metamethods ----------------------------------------------
+
+local function before_func(mm, T, new)
+	local current = T.metamethods[mm]
+	T.metamethods[mm] = function(...)
+		return new(...) or (current and current(...))
+	end
+	return T
+end
+
+local function before_macro(mm, T, new)
+	local current = T.metamethods[mm]
+	T.metamethods[mm] = macro(function(...)
+		return new.fromterra(...) or (current and current.fromterra(...))
+	end)
+	return T
+end
+
+function low.entrymissing(T, new) return before_macro('__entrymissing', T, new) end
+function low.methodmissing(T, new) return before_macro('__methodmissing', T, new) end
+function low.setentry(T, new) return before_macro('__setentry', T, new) end
+function low.getentries(T, new) return before_func('__getentries', T, new) end
+function low.getmethod(T, new) return before_func('__getmethod', T, new) end
+
+--activate macro-based assignable properties in structs
+function low.addproperties(T, props)
+	props = props or {}
+	T.properties = props
+	return entrymissing(T, macro(function(k, self)
+		local prop = assert(props[k], 'property missing: ', k)
+		return `[props[k]](self)
+	end))
+end
+
+--forward t.name to t.sub.name (for anonymous structs and such).
+function low.forwardproperties(sub)
+	return function(T)
+		return entrymissing(T, macro(function(k, self)
+			return `self.[sub].[k]
+		end))
+	end
+end
+
+--activate getters and setters in structs
+function low.gettersandsetters(T)
+	T.gettersandsetters = true
+	entrymissing(T, macro(function(name, obj)
+		if T.methods['get_'..name] then
+			return `obj:['get_'..name]()
+		end
+	end))
+	setentry(T, macro(function(name, obj, rhs)
+		if T.methods['set_'..name] then
+			return quote obj:['set_'..name](rhs) end
+		end
+	end))
+	return T
+end
+
+--lazy method publishing pattern for containers
+--workaround for terra issue #348.
+function low.addmethods(T, addmethods_func)
+	local function addmethods()
+		addmethods = noop
+		addmethods_func()
+	end
+	getmethod(T, function(self, name)
+		addmethods()
+		return self.methods[name]
+	end)
+	--in case meta-code tries to look up a method in T.methods ...
+	local mt = {}; setmetatable(T.methods, mt)
+	function mt:__index(name)
+		addmethods()
+		mt.__index = nil
+		return self[name]
+	end
+	return T
+end
+
+--wrapping opaque structs declared in C headers
+--workaround for terra issue #351.
+function low.wrapopaque(T)
+	return getentries(T, function() return {} end)
+end
+
+--auto init/free struct members
+--NOTE: this needs field annotations so we can mark owned fields and only
+--init/free those.
+function low.initfreefields(T)
+	--TODO: implement
+	return T
+end
+
 --C include system -----------------------------------------------------------
 
 local platos = {Windows = 'mingw', Linux = 'linux', OSX = 'osx'}
@@ -467,6 +494,7 @@ low.floor = macro(function(x) return `C.floor(x) end, math.floor)
 low.ceil  = macro(function(x) return `C.ceil(x) end, math.ceil)
 low.sqrt  = macro(function(x) return `C.sqrt(x) end, math.sqrt)
 low.pow   = C.pow
+low.log   = macro(function(x) return `C.log(x) end, math.log)
 low.sin   = macro(function(x) return `C.sin(x) end, math.sin)
 low.cos   = macro(function(x) return `C.cos(x) end, math.cos)
 low.tan   = macro(function(x) return `C.tan(x) end, math.tan)
@@ -761,7 +789,7 @@ elseif OSX then
 end
 low.clock = macro(clock, terralib.currenttimeinseconds)
 
---typed realloc and calloc ---------------------------------------------------
+--typed realloc, calloc and free ---------------------------------------------
 
 low.alloc = macro(function(T, len, oldp)
 	oldp = oldp or `nil
@@ -784,6 +812,15 @@ low.new = macro(function(T, len)
 	end
 end)
 
+low.free = macro(function(p, nilvalue)
+	local T = p:gettype().type
+	local free = T.methods and T.methods.free or C.free
+	nilvalue = nilvalue or `nil
+	return quote
+		if p ~= nil then free(p); p = nilvalue; end
+	end
+end)
+
 --typed memset ---------------------------------------------------------------
 
 low.fill = macro(function(lval, val, len)
@@ -803,9 +840,21 @@ end)
 --typed memmove --------------------------------------------------------------
 
 low.copy = macro(function(dst, src, len)
-	local T = dst:gettype().type
-	assert(T == src:gettype().type)
-	return quote memmove(dst, src, len * sizeof(T)) in dst end
+	len = len or 1
+	local T1 = dst:gettype().type
+	local T2 = src:gettype().type
+	assert(T1 == T2)
+	return quote memmove(dst, src, len * sizeof(T1)) in dst end
+end)
+
+--typed memcmp ---------------------------------------------------------------
+
+low.equal = macro(function(p1, p2, len)
+	len = len or 1
+	local T1 = p1:gettype().type
+	local T2 = p2:gettype().type
+	assert(T1 == T2)
+	return `memcmp(p1, p2, len * sizeof(T1)) == 0
 end)
 
 --default hash function ------------------------------------------------------
@@ -837,7 +886,7 @@ local terra readfile(name: cstring): {&opaque, int64}
 				rewind(f)
 				var out = [&opaque](new(uint8, filesize))
 				if out ~= nil then
-					defer free(out)
+					defer C.free(out)
 					if fread(out, 1, filesize, f) == filesize then
 						return out, filesize
 					end
@@ -853,22 +902,25 @@ low.readfile = macro(function(name) return `readfile(name) end, glue.readfile)
 
 low.freelist = memoize(function(T)
 	local struct freelist {
-		items: arr(&T);
+		next: &freelist;
 	}
 	addmethods(freelist, function()
-		addmethods = noop
+		assert(sizeof(T) >= sizeof(&opaque), 'freelist item too small')
 		terra freelist:init()
-			self.items:init()
+			self.next = nil
 		end
 		terra freelist:free()
-			for i,p in self.items do
-				free(@p)
+			while self.next ~= nil do
+				var next = self.next.next
+				C.free(self.next)
+				self.next = next
 			end
-			self.items:free()
 		end
 		terra freelist:alloc()
-			if self.items.len > 0 then
-				return self.items:pop()
+			if self.next ~= nil then
+				var p = self.next
+				self.next = p.next
+				return [&T](p)
 			else
 				return alloc(T)
 			end
@@ -878,8 +930,9 @@ low.freelist = memoize(function(T)
 			return iif(p ~= nil, fill(p), nil)
 		end
 		terra freelist:release(p: &T)
-			var i = self.items:push(p)
-			if i == -1 then free(p) end
+			var node = [&freelist](p)
+			node.next = self.next
+			self.next = node
 		end
 	end)
 	return freelist
@@ -888,11 +941,14 @@ end)
 --building to dll for Lua consumption ----------------------------------------
 
 --Features:
--- * supports publishing terra functions and terra structs with methods.
+-- * supports publishing terra functions and named terra structs with methods.
 -- * tuples and function pointers are typedef'ed with friendly unique names.
--- * the same tuple can appear in multiple modules without clash.
+-- * the same tuple definition can appear in multiple modules without error.
 -- * auto-assign methods to types via ffi.metatype.
 -- * type name override with `__typename_ffi` metamethod.
+-- * deciding which methods to publish with `public_methods` table.
+-- * deciding which methods to publish with `__ismethodpublic` metamethod.
+-- * publishing enum and bitmask values.
 
 function low.publish(modulename)
 
@@ -900,26 +956,43 @@ function low.publish(modulename)
 	setmetatable(self, self)
 
 	local objects = {}
+	local enums = {}
 
-	function self:__call(T)
-		assert(type(T) == 'terrafunction' or (T:isstruct() and not istuple(T)))
-		add(objects, T)
+	function self:__call(T, public_methods, opaque)
+		if type(T) == 'terrafunction' or (T:isstruct() and not istuple(T)) then
+			T.opaque = opaque
+			T.public_methods = public_methods
+			add(objects, T)
+		elseif type(T) == 'table' and not getmetatable(T) then --plain table: enums
+			update(enums, T)
+		else
+			assert(false, 'expected terra function, struct or enum table, got ', T)
+		end
 		return T
+	end
+
+	function self:getenums(moduletable)
+		for k,v in pairs(moduletable) do
+			if type(k) == 'string' and type(v) == 'number' and k:upper() == k then
+				enums[k] = v
+			end
+		end
 	end
 
 	local saveobj_table = {}
 
 	function self:bindingcode()
-		local tdefs = {}
-		local xdefs = {}
-		local cdefs = {}
-		local mdefs = {}
+		local tdefs = {} --typedefs
+		local pdefs = {} --function pointer typedefs
+		local xdefs = {} --shared struct defs (pcalled)
+		local cdefs = {} --function defs
+		local mdefs = {} --metatype defs
 
 		add(tdefs, "local ffi = require'ffi'\n")
 		add(tdefs, "local C = ffi.load'"..modulename.."'\n")
 		add(tdefs, 'ffi.cdef[[\n')
 
-		local ctype
+		local ctype --fw. decl.
 
 		local function cdef_tuple(T, name)
 			add(xdefs, 'pcall(ffi.cdef, \'')
@@ -929,34 +1002,37 @@ function low.publish(modulename)
 				append(xdefs, ctype(type), ' ', name, '; ')
 			end
 			add(xdefs, '};\')\n')
+		end
+
+		local function typedef_struct(name)
 			append(tdefs, 'typedef struct ', name, ' ', name, ';\n')
 		end
 
-		local function cdef_functionpointer(T, name)
-			append(tdefs, 'typedef ', ctype(T.returntype), ' (*', name, ') (')
+		local function typedef_functionpointer(T, name)
+			append(pdefs, 'typedef ', ctype(T.returntype), ' (*', name, ') (')
 			for i,arg in ipairs(T.parameters) do
-				add(tdefs, ctype(arg))
+				add(pdefs, ctype(arg))
 				if i < #T.parameters then
-					add(tdefs, ', ')
+					add(pdefs, ', ')
 				end
 				if T.isvararg then
-					add(tdefs, ',...')
+					add(pdefs, ',...')
 				end
 			end
-			add(tdefs, ');\n')
+			add(pdefs, ');\n')
 		end
 
 		local function append_typename_fragment(s, T, n)
 			if not T then return s end
-			local ct = T:isintegral() and tostring(T):gsub('32$', '') or ctype(T)
+			local ct = T:isintegral() and tostring(T):gsub('32$', '')
+				or T:ispointer() and 'p' .. ctype(T.type)
+				or ctype(T)
 			return s .. (s ~= '' and  '_' or '') .. ct .. (n > 1 and n or '')
 		end
 		local function unique_typename(types)
 			local type0, n = nil, 0
 			local s = ''
-			for i,e in ipairs(types) do
-				--either tuple element or function arg
-				local type = #e > 0 and e[2] or e
+			for i,type in ipairs(types) do
 				if type ~= type0 then
 					s = append_typename_fragment(s, type0, n)
 					type0, n = type, 1
@@ -968,7 +1044,8 @@ function low.publish(modulename)
 		end
 
 		local function tuple_typename(T)
-			return unique_typename(T.entries)
+			--each tuple entry is the array {name, type}, hence plucking index 2.
+			return unique_typename(glue.map(T.entries, 2))
 		end
 
 		local function function_typename(T)
@@ -981,19 +1058,22 @@ function low.publish(modulename)
 			return (s:gsub('[%${},()]', '_'))
 		end
 
-		local function typename(T)
+		local function typename(T, name)
 			local typename = T.metamethods and T.metamethods.__typename_ffi
-			local typename = typename and typename(T)
-			if not typename then
-				if istuple(T) then
-					typename = clean_typename(tuple_typename(T))
-					cdef_tuple(T, typename)
-				elseif T:isfunction() then
-					typename = clean_typename(function_typename(T))
-					cdef_functionpointer(T, typename)
-				else
-					typename = clean_typename(tostring(T))
-				end
+			local typename = typename
+				and (type(typename) == 'string' and typename or typename(T))
+			if istuple(T) then
+				typename = typename or clean_typename(tuple_typename(T))
+				cdef_tuple(T, typename)
+				typedef_struct(typename)
+			elseif T:isstruct() then
+				typename = typename or clean_typename(tostring(T))
+				typedef_struct(typename)
+			elseif T:isfunction() then
+				typename = typename or clean_typename(name or function_typename(T))
+				typedef_functionpointer(T, typename)
+			else
+				typename = clean_typename(tostring(T))
 			end
 			return typename
 		end
@@ -1008,7 +1088,7 @@ function low.publish(modulename)
 				return 'const char *'
 			elseif T:ispointer() then
 				if T:ispointertofunction() then
-					return typename(T.type)
+					return typename(T.type, T.__typename_ffi)
 				else
 					return ctype(T.type)..'*'
 				end
@@ -1037,6 +1117,32 @@ function low.publish(modulename)
 			saveobj_table[name] = func
 		end
 
+		local function cdef_entries(cdefs, entries, indent)
+			for i,e in ipairs(entries) do
+				for i=1,indent do add(cdefs, '\t') end
+				if #e > 0 and type(e[1]) == 'table' then --union
+					add(cdefs, 'union {\n')
+					cdef_entries(cdefs, e, indent + 1)
+					for i=1,indent do add(cdefs, '\t') end
+					add(cdefs, '};\n')
+				else
+					append(cdefs, ctype(e.type), ' ', e.field, ';\n')
+				end
+			end
+		end
+		local function cdef_struct(T)
+			name = typename(T)
+			if not T.opaque then
+				append(cdefs, 'struct ', name, ' {\n')
+				cdef_entries(cdefs, T.entries, 1)
+				add(cdefs, '};\n')
+			end
+		end
+
+		local function ispublic(T, fname)
+			return not T.public_methods or T.public_methods[fname]
+		end
+
 		local function cdef_methods(T)
 			local function cmp(k1, k2) --declare methods in source code order
 				local d1 = T.methods[k1].definition
@@ -1047,43 +1153,58 @@ function low.publish(modulename)
 					return d1.filename < d2.filename
 				end
 			end
-			local ispublic = T.metamethods.__ismethodpublic
+			local ispublic = T.metamethods.__ismethodpublic or ispublic
 			local name = typename(T)
-			local mdefs1 = {}
-			for fname, func in sortedpairs(T.methods, cmp) do
-				if not ispublic or ispublic(T, fname) then
+			local methods = {}
+			local getters = {}
+			local setters = {}
+			local terramethods = glue.map(T.methods, function(k, v)
+				return type(v) == 'terrafunction' and v or nil
+			end)
+			for fname, func in sortedpairs(terramethods, cmp) do
+				if ispublic(T, fname) then
 					local cname = name..'_'..fname
 					cdef_function(func, cname)
-					add(mdefs1, '\t'..fname..' = C.'..cname..',\n')
+					local t
+					if T.gettersandsetters then
+						if fname:starts'get_' then
+							t, fname = getters, fname:gsub('^get_', '')
+						elseif fname:starts'set_' then
+							t, fname = setters, fname:gsub('^set_', '')
+						else
+							t = methods
+						end
+					else
+						t = methods
+					end
+					add(t, '\t'..fname..' = C.'..cname..',\n')
 				end
 			end
-			if #mdefs1 > 0 then
+			if T.gettersandsetters and (#getters > 0 or #setters > 0) then
+				add(mdefs, 'local getters = {\n'); extend(mdefs, getters); add(mdefs, '}\n')
+				add(mdefs, 'local setters = {\n'); extend(mdefs, setters); add(mdefs, '}\n')
+				add(mdefs, 'local methods = {\n'); extend(mdefs, methods); add(mdefs, '}\n')
+				add(mdefs, [[
+ffi.metatype(']]..name..[[', {
+	__index = function(self, k)
+		local getter = getters[k]
+		if getter then return getter(self) end
+		return methods[k]
+	end,
+	__newindex = function(self, k, v)
+		local setter = setters[k]
+		if not setter then
+			error(('field not found: %s'):format(tostring(k)), 2)
+		end
+		setter(self, v)
+	end,
+})
+]])
+			else
 				append(mdefs, 'ffi.metatype(\'', name, '\', {__index = {\n')
-				extend(mdefs, mdefs1)
+				extend(mdefs, methods)
 				add(mdefs, '}})\n')
 			end
-		end
-
-		local function cdef_entries(entries, indent)
-			for i,e in ipairs(entries) do
-				for i=1,indent do add(cdefs, '\t') end
-				if #e > 0 and type(e[1]) == 'table' then --union
-					add(cdefs, 'union {\n')
-					cdef_entries(e, indent + 1)
-					for i=1,indent do add(cdefs, '\t') end
-					add(cdefs, '};\n')
-				else
-					append(cdefs, ctype(e.type), ' ', e.field, ';\n')
-				end
-			end
-		end
-		local function cdef_struct(T)
-			local name = typename(T)
-			append(tdefs, 'typedef struct ', name, ' ', name, ';\n')
-			append(cdefs, 'struct ', name, ' {\n')
-			cdef_entries(T.entries, 1)
-			add(cdefs, '};\n')
-			cdef_methods(T)
 		end
 
 		for i,obj in ipairs(objects) do
@@ -1091,12 +1212,26 @@ function low.publish(modulename)
 				cdef_function(obj, obj.name)
 			elseif obj:isstruct() then
 				cdef_struct(obj)
+				cdef_methods(obj)
 			end
 		end
 
 		add(cdefs, ']]\n')
 
-		return concat(tdefs) .. concat(cdefs) .. concat(xdefs) .. concat(mdefs)
+		local enums_code = ''
+		if next(enums) then
+			local t = {'ffi.cdef[[\nenum {\n'}
+			local function addt(s) add(t, s) end
+			for k,v in sortedpairs(enums) do
+				add(t, '\t'); add(t, k); add(t, ' = '); pp.write(addt, v); add(t, ',\n')
+			end
+			enums_code = concat(t) .. '}]]\n'
+		end
+
+		return concat(tdefs) .. concat(pdefs) .. concat(cdefs)
+			.. concat(xdefs) .. concat(mdefs) .. enums_code
+			.. 'return C\n'
+
 	end
 
 	function self:savebinding()
@@ -1140,30 +1275,33 @@ function low.publish(modulename)
 	return self
 end
 
---expand terra's unpacktuple() to work with plain cdata structs.
-local function createunpack(terraunpack)
-	return terralib.internalmacro(terraunpack.fromterra, function(cdata, i, j)
-		if type(cdata) == 'cdata' and not terralib.typeof(cdata) then
-			local refct = ffi_reflect.typeof(cdata)
-			if refct.what == 'struct' then
-				local t = {}
-				i = i or 1
-				j = j or 1/0
-				local k = 1
-				for refct in refct:members() do
-					if k > j then break end
-					if k >= i then
-						t[k-i+1] = cdata[refct.name]
-					end
-					k = k + 1
-				end
-				return unpack(t, 1, k-i)
-			end
-		end
-		return terraunpack.fromlua(cdata, i, j)
-	end)
-end
-low.unpackstruct = createunpack(terralib.unpackstruct)
-low.unpacktuple = createunpack(terralib.unpacktuple)
-
 return low
+
+--[[
+--create a public struct with private fields made opaque ---------------------
+
+local function default_isprivate(e)
+	return e.field and e.field:starts'_'
+end
+function low.public_struct(T, isprivate)
+	isprivate = isprivate or default_isprivate
+	local P = newstruct()
+	local n = 0
+	local start_offset
+	for i,e in ipairs(T.entries) do
+		local isprivate = isprivate(e, T)
+		if not start_offset and isprivate then
+			start_offset = offsetof(T, e.field)
+		elseif start_offset and not isprivate then
+			local size = offsetof(T, e.field) - start_offset
+			add(P.entries, {field = '__private'..n, type = int8[size]})
+			n = n + 1
+			start_offset = nil
+		end
+		if not isprivate then
+			add(P.entries, {field = e.field, type = e.type})
+		end
+	end
+	return P
+end
+]]
