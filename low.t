@@ -412,11 +412,13 @@ end
 function low.gettersandsetters(T)
 	T.gettersandsetters = true
 	after_entrymissing(T, function(name, obj)
+		if T.addmethods then T.addmethods() end
 		if T.methods['get_'..name] then
 			return `obj:['get_'..name]()
 		end
 	end)
 	after_setentry(T, function(name, obj, rhs)
+		if T.addmethods then T.addmethods() end
 		if T.methods['set_'..name] then
 			return quote obj:['set_'..name](rhs) end
 		end
@@ -428,15 +430,14 @@ end
 --workaround for terra issue #348.
 --NOTE: __methodmissing is no longer called if __getmethod is present!
 function low.addmethods(T, addmethods_func)
-	local function addmethods()
-		addmethods = noop
+	T.addmethods = function(self, name)
+		T.addmethods = nil
 		addmethods_func()
 	end
-	after_getmethod(T, function(self, name)
-		addmethods()
+	return after_getmethod(T, function(self, name)
+		if T.addmethods then T.addmethods() end
 		return self.methods[name]
 	end)
-	return T
 end
 
 --wrapping opaque structs declared in C headers
