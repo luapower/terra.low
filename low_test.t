@@ -1,3 +1,4 @@
+
 setfenv(1, require'low')
 
 local terra test_math()
@@ -95,7 +96,7 @@ local function test_publish()
 	gettersandsetters(S)
 
 	terra f(x: anon): S end; public(f)
-	terra g(x: &opaque, s: cstring, b: bool) end; public(g)
+	terra g(x: &opaque, s: rawstring, b: bool) end; public(g)
 
 	local bool2 = tuple(bool, bool)
 	terra S:f(x: {int, int}, y: {int8, int8, bool2}): {num, num, bool}

@@ -13,10 +13,6 @@ local ffi = require'ffi'
 local glue = require'glue'
 local pp = require'pp'
 local ffi_reflect = require'ffi_reflect' --for unpacktuple() and unpackstruct()
---terra libs
-local random = require'random'
-local arr = require'dynarray'
-local map = require'khash'
 
 --The C namespace: include() and extern() dump symbols here.
 local C = {}; setmetatable(C, C); C.__index = _G
@@ -306,7 +302,6 @@ low.type = terralib.type
 low.char = int8
 low.enum = int8
 low.num = double --Lua-compat type
-low.cstring = rawstring
 low.codepoint = uint32
 low.offsetof = terralib.offsetof
 
@@ -340,81 +335,107 @@ end
 
 --extensible struct metamethods ----------------------------------------------
 
-local function before_func(mm, T, new)
-	local current = T.metamethods[mm]
-	T.metamethods[mm] = function(...)
-		return new(...) or (current and current(...))
+local function override(mm, T, f, mkmacro)
+	local f0 = T.metamethods[mm] or noop
+	--TODO: see why errors are lost in recursive calls to __getmethod
+	--and remove this whole hack with pcall and pass.
+	local function pass(ok, ...)
+		if not ok then
+			print(...)
+			os.exit(-1)
+		end
+		return ...
 	end
+	local f = function(...)
+		return pass(pcall(f, f0, ...))
+	end
+	if mkmacro then f = macro(f) end
+	T.metamethods[mm] = f
 	return T
 end
 
-local function before_macro(mm, T, new)
-	local current = T.metamethods[mm]
-	T.metamethods[mm] = macro(function(...)
-		return new.fromterra(...) or (current and current.fromterra(...))
-	end)
-	return T
+local function before(mm, T, f, ...)
+	local f = function(inherited, ...)
+		return f(...) or inherited(...)
+	end
+	return override(mm, T, f, ...)
+end
+local function after(mm, T, f, ...)
+	local f = function(inherited, ...)
+		return inherited(...) or f(...)
+	end
+	return override(mm, T, f, ...)
 end
 
-function low.entrymissing(T, new) return before_macro('__entrymissing', T, new) end
-function low.methodmissing(T, new) return before_macro('__methodmissing', T, new) end
-function low.setentry(T, new) return before_macro('__setentry', T, new) end
-function low.getentries(T, new) return before_func('__getentries', T, new) end
-function low.getmethod(T, new) return before_func('__getmethod', T, new) end
+function low.entrymissing  (T, f) return override('__entrymissing', T, f, true) end
+function low.methodmissing (T, f) return override('__methodmissing', T, f, true) end
+function low.setentry      (T, f) return override('__setentry', T, f, true) end
+function low.getentries    (T, f) return override('__getentries', T, f) end
+function low.getmethod     (T, f) return override('__getmethod', T, memoize(f)) end
 
---activate macro-based assignable properties in structs
+function low.before_entrymissing  (T, f) return before('__entrymissing', T, f, true) end
+function low.before_methodmissing (T, f) return before('__methodmissing', T, f, true) end
+function low.before_setentry      (T, f) return before('__setentry', T, f, true) end
+function low.before_getentries    (T, f) return before('__getentries', T, f) end
+function low.before_getmethod     (T, f) return before('__getmethod', T, memoize(f)) end
+
+function low.after_entrymissing  (T, f) return after('__entrymissing', T, f, true) end
+function low.after_methodmissing (T, f) return after('__methodmissing', T, f, true) end
+function low.after_setentry      (T, f) return after('__setentry', T, f, true) end
+function low.after_getentries    (T, f) return after('__getentries', T, f) end
+function low.after_getmethod     (T, f) return after('__getmethod', T, memoize(f)) end
+
+--activate macro-based assignable properties in structs.
 function low.addproperties(T, props)
 	props = props or {}
 	T.properties = props
-	return entrymissing(T, macro(function(k, self)
-		local prop = assert(props[k], 'property missing: ', k)
-		return `[props[k]](self)
-	end))
+	return after_entrymissing(T, function(k, self)
+		local prop = props[k]
+		if type(prop) == 'terramacro' or type(prop) == 'terrafunction' then
+			return `prop(self)
+		else
+			return prop --quote or Lua constant value
+		end
+	end)
 end
 
 --forward t.name to t.sub.name (for anonymous structs and such).
 function low.forwardproperties(sub)
 	return function(T)
-		return entrymissing(T, macro(function(k, self)
+		return after_entrymissing(T, function(k, self)
 			return `self.[sub].[k]
-		end))
+		end)
 	end
 end
 
---activate getters and setters in structs
+--activate getters and setters in structs.
 function low.gettersandsetters(T)
 	T.gettersandsetters = true
-	entrymissing(T, macro(function(name, obj)
+	after_entrymissing(T, function(name, obj)
 		if T.methods['get_'..name] then
 			return `obj:['get_'..name]()
 		end
-	end))
-	setentry(T, macro(function(name, obj, rhs)
+	end)
+	after_setentry(T, function(name, obj, rhs)
 		if T.methods['set_'..name] then
 			return quote obj:['set_'..name](rhs) end
 		end
-	end))
+	end)
 	return T
 end
 
 --lazy method publishing pattern for containers
 --workaround for terra issue #348.
+--NOTE: __methodmissing is no longer called if __getmethod is present!
 function low.addmethods(T, addmethods_func)
 	local function addmethods()
 		addmethods = noop
 		addmethods_func()
 	end
-	getmethod(T, function(self, name)
+	after_getmethod(T, function(self, name)
 		addmethods()
 		return self.methods[name]
 	end)
-	--in case meta-code tries to look up a method in T.methods ...
-	local mt = {}; setmetatable(T.methods, mt)
-	function mt:__index(name)
-		addmethods()
-		mt.__index = nil
-		return self[name]
-	end
 	return T
 end
 
@@ -422,14 +443,6 @@ end
 --workaround for terra issue #351.
 function low.wrapopaque(T)
 	return getentries(T, function() return {} end)
-end
-
---auto init/free struct members
---NOTE: this needs field annotations so we can mark owned fields and only
---init/free those.
-function low.initfreefields(T)
-	--TODO: implement
-	return T
 end
 
 --C include system -----------------------------------------------------------
@@ -504,8 +517,6 @@ low.atan  = macro(function(x) return `C.atan(x) end, math.sin)
 low.atan2 = macro(function(y, x) return `C.atan2(y, x) end, math.sin)
 low.deg   = macro(function(r) return `r * (180.0 / PI) end, math.deg)
 low.rad   = macro(function(d) return `d * (PI / 180.0) end, math.rad)
-low.random    = random.random
-low.randomize = random.randomize
 --go full Pascal :)
 low.inc  = macro(function(lval, i) i=i or 1; return quote lval = lval + i in lval end end)
 low.dec  = macro(function(lval, i) i=i or 1; return quote lval = lval - i in lval end end)
@@ -789,7 +800,7 @@ elseif OSX then
 end
 low.clock = macro(clock, terralib.currenttimeinseconds)
 
---typed realloc, calloc and free ---------------------------------------------
+--typed malloc ---------------------------------------------------------------
 
 low.alloc = macro(function(T, len, oldp)
 	oldp = oldp or `nil
@@ -797,29 +808,40 @@ low.alloc = macro(function(T, len, oldp)
 	T = T:astype()
 	return quote
 		assert(len >= 0)
-		var p = iif(len > 0, [&T](C.realloc(oldp, len * sizeof(T))), nil)
-		in p
+		var p = iif(len > 0, [&T](C.realloc(oldp, len * sizeof(T))), nil) in p
 	end
 end)
 
-low.new = macro(function(T, len)
+local empty = {}
+low.new = macro(function(T, len, ...)
 	len = len or 1
 	T = T:astype()
-	return quote
-		assert(len >= 0)
-		var p = iif(len > 0, [&T](C.calloc(len, sizeof(T))), nil)
-		in p
+	local init = T.getmethod and T:getmethod'init'
+	if init then
+		local init_args = #init.type.parameters > 1 and {...} or empty
+		return quote
+			var p = alloc(T, len); init(p, [init_args]) in p
+		end
+	else
+		return quote
+			assert(len >= 0)
+			var p = iif(len > 0, [&T](C.calloc(len, sizeof(T))), nil) in p
+		end
 	end
 end)
 
+--TODO: calling free(&obj) calls obj:free() even when &obj is an array
+--that was malloc'd and must be free'd. Hence memfree() but we can do better.
 low.free = macro(function(p, nilvalue)
 	local T = p:gettype().type
-	local free = T.methods and T.methods.free or C.free
+	local free = T.getmethod and T:getmethod'free' or C.free
 	nilvalue = nilvalue or `nil
 	return quote
 		if p ~= nil then free(p); p = nilvalue; end
 	end
 end)
+
+low.memfree = C.free
 
 --typed memset ---------------------------------------------------------------
 
@@ -843,7 +865,7 @@ low.copy = macro(function(dst, src, len)
 	len = len or 1
 	local T1 = dst:gettype().type
 	local T2 = src:gettype().type
-	assert(T1 == T2)
+	assert(T1 == T2, 'copy() type mismatch ', T1, ' vs ', T2)
 	return quote memmove(dst, src, len * sizeof(T1)) in dst end
 end)
 
@@ -876,7 +898,7 @@ low.hash64 = macro(function(k, len, seed) return `hash(int64, k, len, seed) end)
 
 --readfile -------------------------------------------------------------------
 
-local terra readfile(name: cstring): {&opaque, int64}
+local terra readfile(name: rawstring): {&opaque, int64}
 	var f = fopen(name, 'rb')
 	defer fclose(f)
 	if f ~= nil then
@@ -945,10 +967,12 @@ end)
 -- * tuples and function pointers are typedef'ed with friendly unique names.
 -- * the same tuple definition can appear in multiple modules without error.
 -- * auto-assign methods to types via ffi.metatype.
+-- * enable getters and setters via ffi.metatype.
 -- * type name override with `__typename_ffi` metamethod.
--- * deciding which methods to publish with `public_methods` table.
--- * deciding which methods to publish with `__ismethodpublic` metamethod.
+-- * deciding which methods to publish via `public_methods` table.
+-- * deciding which methods to publish via `__ismethodpublic` metamethod.
 -- * publishing enum and bitmask values.
+-- * diff-friendly deterministic output.
 
 function low.publish(modulename)
 
@@ -1167,9 +1191,9 @@ function low.publish(modulename)
 					cdef_function(func, cname)
 					local t
 					if T.gettersandsetters then
-						if fname:starts'get_' then
+						if fname:starts'get_' and #func.type.parameters == 1 then
 							t, fname = getters, fname:gsub('^get_', '')
-						elseif fname:starts'set_' then
+						elseif fname:starts'set_' and #func.type.parameters == 2 then
 							t, fname = setters, fname:gsub('^set_', '')
 						else
 							t = methods
@@ -1275,33 +1299,12 @@ ffi.metatype(']]..name..[[', {
 	return self
 end
 
+autoload(low, {
+	arrview   = function() low.arrview = require'arrayview' end,
+	arr       = function() low.arr = require'dynarray' end,
+	map       = function() low.map = require'khash' end,
+	random    = function() low.random = require'random'.random end,
+	randomize = function() low.randomize = require'random'.randomize end,
+})
+
 return low
-
---[[
---create a public struct with private fields made opaque ---------------------
-
-local function default_isprivate(e)
-	return e.field and e.field:starts'_'
-end
-function low.public_struct(T, isprivate)
-	isprivate = isprivate or default_isprivate
-	local P = newstruct()
-	local n = 0
-	local start_offset
-	for i,e in ipairs(T.entries) do
-		local isprivate = isprivate(e, T)
-		if not start_offset and isprivate then
-			start_offset = offsetof(T, e.field)
-		elseif start_offset and not isprivate then
-			local size = offsetof(T, e.field) - start_offset
-			add(P.entries, {field = '__private'..n, type = int8[size]})
-			n = n + 1
-			start_offset = nil
-		end
-		if not isprivate then
-			add(P.entries, {field = e.field, type = e.type})
-		end
-	end
-	return P
-end
-]]
