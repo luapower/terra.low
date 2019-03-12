@@ -10,9 +10,9 @@ local ffi = require'ffi'
 --dependencies ---------------------------------------------------------------
 
 --Lua libs
+local zone = require'jit.zone'
 local glue = require'glue'
 local pp = require'pp'
-local ffi_reflect = require'ffi_reflect' --for unpacktuple() and unpackstruct()
 
 --The C namespace: include() and extern() dump symbols here.
 local C = {}; setmetatable(C, C); C.__index = _G
@@ -41,6 +41,7 @@ low[ffi.os] = true
 low.ffi = ffi
 low.low = low
 low.C = C
+low.zone = zone
 low.glue = glue
 low.pp = pp
 low.arr = arr
@@ -477,7 +478,10 @@ end)
 
 --terralib.includec variant that dumps symbols into low.C.
 function low.include(header)
-	return update(C, terralib.includec(header))
+	zone'include'
+	update(C, terralib.includec(header))
+	zone()
+	return C
 end
 
 function low.extern(name, T)
@@ -1260,8 +1264,10 @@ ffi.metatype(']]..name..[[', {
 	end
 
 	function self:savebinding()
+		zone'savebinding'
 		local filename = modulename .. '_h.lua'
 		writefile(filename, self:bindingcode(), nil, filename..'.tmp')
+		zone()
 	end
 
 	function self:binpath(filename)
@@ -1273,7 +1279,9 @@ ffi.metatype(']]..name..[[', {
 	end
 
 	function self:saveobj()
+		zone'saveobj'
 		terralib.saveobj(self:objfile(), 'object', saveobj_table)
+		zone()
 	end
 
 	function self:removeobj()
@@ -1281,12 +1289,14 @@ ffi.metatype(']]..name..[[', {
 	end
 
 	function self:linkobj(linkto)
+		zone'linkobj'
 		local soext = {Windows = 'dll', OSX = 'dylib', Linux = 'so'}
 		local sofile = self:binpath(modulename..'.'..soext[ffi.os])
 		local linkargs = linkto and '-l'..concat(linkto, ' -l') or ''
 		local cmd = 'gcc '..self:objfile()..' -shared '..'-o '..sofile
 			..' -L'..self:binpath()..' '..linkargs
 		os.execute(cmd)
+		zone()
 	end
 
 	function self:build(opt)
