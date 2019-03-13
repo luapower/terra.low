@@ -336,8 +336,9 @@ end
 
 --extensible struct metamethods ----------------------------------------------
 
-local function override(mm, T, f, mkmacro)
-	local f0 = T.metamethods[mm] or noop
+local function override(mm, T, f, ismacro)
+	local f0 = T.metamethods[mm]
+	local f0 = f0 and ismacro and f0.fromterra or f0 or noop
 	--TODO: see why errors are lost in recursive calls to __getmethod
 	--and remove this whole hack with pcall and pass.
 	local function pass(ok, ...)
@@ -350,7 +351,7 @@ local function override(mm, T, f, mkmacro)
 	local f = function(...)
 		return pass(pcall(f, f0, ...))
 	end
-	if mkmacro then f = macro(f) end
+	if ismacro then f = macro(f) end
 	T.metamethods[mm] = f
 	return T
 end
@@ -532,6 +533,27 @@ low.inf    = 1/0
 low.nan    = 0/0
 low.maxint = int:max()
 low.minint = int:min()
+
+--round up an integer to the next integer that is a power of 2.
+low.nextpow2 = macro(function(x)
+	local T = x:gettype()
+	if T:isintegral() then
+		local bytes = sizeof(T)
+		return quote
+			var x = x
+			x = x - 1
+			x = x or (x >>  1)
+			x = x or (x >>  2)
+			x = x or (x >>  4)
+			if bytes >= 2 then x = x or (x >>  8) end
+			if bytes >= 4 then x = x or (x >> 16) end
+			if bytes >= 8 then x = x or (x >> 32) end
+			x = x + 1
+			in x
+		end
+	end
+	error('unsupported type ', x:gettype())
+end)
 
 --math from glue -------------------------------------------------------------
 
@@ -817,6 +839,12 @@ low.alloc = macro(function(T, len, oldp)
 	end
 end)
 
+low.realloc = macro(function(p, len) --also works as free() when len = 0
+	local T = assert(p:gettype().type, 'pointer expected, got ', p:gettype())
+	return `alloc(T, len, p)
+end)
+
+--calls init() on all elements or otherwise zeroes the memory.
 local empty = {}
 low.new = macro(function(T, len, ...)
 	len = len or 1
@@ -824,8 +852,20 @@ low.new = macro(function(T, len, ...)
 	local init = T.getmethod and T:getmethod'init'
 	if init then
 		local init_args = #init.type.parameters > 1 and {...} or empty
-		return quote
-			var p = alloc(T, len); init(p, [init_args]) in p
+		if len == 1 then
+			return quote
+				var p = alloc(T, len)
+				p:init([init_args])
+				in p
+			end
+		else
+			return quote
+				var p = alloc(T, len)
+				for i=0,len do
+					(p+i):init([init_args])
+				end
+				in p
+			end
 		end
 	else
 		return quote
@@ -835,17 +875,46 @@ low.new = macro(function(T, len, ...)
 	end
 end)
 
---TODO: calling free(&obj) calls obj:free() even when &obj is an array
---that was malloc'd and must be free'd. Hence memfree() but we can do better.
-low.free = macro(function(p, nilvalue)
-	local T = p:gettype().type
-	local free = T.getmethod and T:getmethod'free' or C.free
+low.memfree = macro(function(p, nilvalue)
 	nilvalue = nilvalue or `nil
 	return quote
-		if p ~= nil then free(p); p = nilvalue; end
+		if p ~= nil then
+			C.free(p)
+			p = nilvalue
+		end
 	end
 end)
-low.memfree = C.free
+
+--note the necessity to pass a `len` if freeing an array of objects that
+--have a free() method, and the necessity to use memfree() instead of this
+--function if the buffer doesn't own the objects but only holds a copy.
+low.free = macro(function(p, len, nilvalue)
+	nilvalue = nilvalue or `nil
+	len = len or 1
+	local T = p:gettype().type
+	local free = T.getmethod and T:getmethod'free'
+	if free then
+		if len == 1 then
+			return quote
+				if p ~= nil then
+					p:free()
+					C.free(p)
+					p = nilvalue
+				end
+			end
+		else
+			return quote
+				for i=0,len do
+					(p+i):free()
+				end
+				C.free(p)
+				p = nilvalue
+			end
+		end
+	else
+		return quote memfree(p, nilvalue) end
+	end
+end)
 
 --typed memset ---------------------------------------------------------------
 
@@ -865,50 +934,77 @@ end)
 
 --typed memmove --------------------------------------------------------------
 
-low.copy = macro(function(dst, src, len)
+low.memcopy = macro(function(dst, src, len)
 	len = len or 1
 	local T1 = dst:gettype().type
 	local T2 = src:gettype().type
-	assert(T1 == T2, 'copy() type mismatch ', T1, ' vs ', T2)
-	return quote memmove(dst, src, len * sizeof(T1)) in dst end
+	assert(sizeof(T1) == sizeof(T2), 'memcopy() sizeof mismatch ', T1, ' vs ', T2)
+	local T = T1
+	return quote memmove(dst, src, len * sizeof(T)) in dst end
+end)
+
+low.copy = macro(function(dst, src, len)
+	--TODO: check if T1 can be cast to T2 or viceversa and use that instead!
+	return `memcopy(dst, src, len)
 end)
 
 --typed memcmp ---------------------------------------------------------------
+
+low.memequal = macro(function(p1, p2, len)
+	len = len or 1
+	local T1 = p1:gettype().type
+	local T2 = p2:gettype().type
+	assert(sizeof(T1) == sizeof(T2), 'memequal() sizeof mismatch ', T1, ' vs ', T2)
+	local T = T1
+	return `memcmp(p1, p2, len * sizeof(T)) == 0
+end)
+
+local op_eq = macro(function(a, b) return `@a == @b end)
+local mt_eq = macro(function(a, b) return `a:__eq(b) end)
 
 low.equal = macro(function(p1, p2, len)
 	len = len or 1
 	local T1 = p1:gettype().type
 	local T2 = p2:gettype().type
-	assert(T1 == T2)
-	--look for an __eq method first
-	if T1:isstruct() and T1:getmethod'__eq' then
-		return quote
-			var eq = false
-			for i=0,len do
-				if p1:__eq(p2) then
-					eq = true
-					break
+	--TODO: check if T1 can be cast to T2 or viceversa first!
+	assert(T1 == T2, 'equal() type mismatch ', T1, ' vs ', T2)
+	local T = T1
+	--check if elements must be compared via `==` operator.
+	--floats can't be memcmp'ed since they may not be normalized.
+	local must_op = T.metamethods and T.metamethods.__eq and op_eq
+	local must_mt = T.getmethod and T:getmethod'__eq' and mt_eq
+	local eq = must_op or must_mt or (T:isfloat() and op_eq)
+	if eq then
+		if len == 1 then
+			return `eq(p1, p2)
+		else
+			return quote
+				var equal = false
+				for i=0,len do
+					if eq(p1, p2) then
+						equal = true
+						break
+					end
 				end
+				in equal
 			end
-			in eq
 		end
+	else --fallback to memcmp
+		return `memequal(p1, p2, len)
 	end
-	--TODO: try direct comparison
-
-	return `memcmp(p1, p2, len * sizeof(T1)) == 0
 end)
 
 --default hash function ------------------------------------------------------
 
 low.memhash = macro(function(size_t, k, h, len) --FNV-1A hash
 	local size_t = size_t:astype()
-	local ktype = k:gettype().type
+	local T = assert(k:gettype().type, 'pointer expected, got ', k:gettype())
 	local len = len or 1
 	h = h or 0x811C9DC5
 	return quote
 		var d = [size_t](h)
 		var k = [&int8](k)
-		for i = 0, len * sizeof(ktype) do
+		for i = 0, len * sizeof(T) do
 			d = (d ^ k[i]) * 16777619
 		end
 		in d
@@ -916,21 +1012,23 @@ low.memhash = macro(function(size_t, k, h, len) --FNV-1A hash
 end)
 
 low.hash = macro(function(size_t, k, h, len)
+	len = len or 1
+	h = h or 0
 	local size_t = size_t:astype()
-	local ktype = k:gettype().type
-	assert(ktype, 'pointer expected, got ', k:gettype())
-	local h = h or 0
-	local len = len or 1
-	--look for a hash method first
-	if ktype:isstruct() then
+	local T = assert(k:gettype().type, 'pointer expected, got ', k:gettype())
+	if T.getmethod then
 		local method = '__hash'..(sizeof(size_t) * 8)
-		if ktype:getmethod(method) then
-			return quote
-				var h = [size_t](h)
-				for i = 0, len do
-					h = k:[method](h)
+		if T:getmethod(method) then
+			if len == 1 then
+				return `k:[method]([size_t](h))
+			else
+				return quote
+					var h = [size_t](h)
+					for i=0,len do
+						h = k:[method](h)
+					end
+					in h
 				end
-				in h
 			end
 		end
 	end

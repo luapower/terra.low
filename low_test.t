@@ -34,6 +34,12 @@ local function test_print()
 end
 test_print()
 
+local terra test_nextpow2()
+	assert(nextpow2([uint64]([int32:max()]/2+2)) - [int32:max()] == 1)
+	assert(nextpow2([uint64]([int64:max()]/2+2)) - [int64:max()] == 1)
+end
+test_nextpow2()
+
 local cmp = macro(function(t, i, v) return `t[i] <= v end)
 local terra test_binsearch()
 	var a = arrayof(int, 11, 13, 15)
@@ -66,11 +72,10 @@ local terra test_freelist()
 end
 test_freelist()
 
-local terra terra_clock()
-	return clock()
+local terra test_clock()
+	print('clock accuracy', clock() - clock())
 end
-local t0 = terra_clock()
-print(clock() - t0)
+test_clock()
 
 local function test_publish()
 	local public = publish'publish_test'
