@@ -845,7 +845,6 @@ low.free = macro(function(p, nilvalue)
 		if p ~= nil then free(p); p = nilvalue; end
 	end
 end)
-
 low.memfree = C.free
 
 --typed memset ---------------------------------------------------------------
@@ -881,25 +880,62 @@ low.equal = macro(function(p1, p2, len)
 	local T1 = p1:gettype().type
 	local T2 = p2:gettype().type
 	assert(T1 == T2)
+	--look for an __eq method first
+	if T1:isstruct() and T1:getmethod'__eq' then
+		return quote
+			var eq = false
+			for i=0,len do
+				if p1:__eq(p2) then
+					eq = true
+					break
+				end
+			end
+			in eq
+		end
+	end
+	--TODO: try direct comparison
+
 	return `memcmp(p1, p2, len * sizeof(T1)) == 0
 end)
 
 --default hash function ------------------------------------------------------
 
-low.hash = macro(function(size_t, k, len, seed) --FNV-1A hash
-	size_t = size_t:astype()
-	seed = seed or 0x811C9DC5
+low.memhash = macro(function(size_t, k, h, len) --FNV-1A hash
+	local size_t = size_t:astype()
+	local ktype = k:gettype().type
+	local len = len or 1
+	h = h or 0x811C9DC5
 	return quote
-		var d: size_t = seed
+		var d = [size_t](h)
 		var k = [&int8](k)
-		for i = 0, len do
+		for i = 0, len * sizeof(ktype) do
 			d = (d ^ k[i]) * 16777619
 		end
 		in d
 	end
 end)
-low.hash32 = macro(function(k, len, seed) return `hash(int32, k, len, seed) end)
-low.hash64 = macro(function(k, len, seed) return `hash(int64, k, len, seed) end)
+
+low.hash = macro(function(size_t, k, h, len)
+	local size_t = size_t:astype()
+	local ktype = k:gettype().type
+	assert(ktype, 'pointer expected, got ', k:gettype())
+	local h = h or 0
+	local len = len or 1
+	--look for a hash method first
+	if ktype:isstruct() then
+		local method = '__hash'..(sizeof(size_t) * 8)
+		if ktype:getmethod(method) then
+			return quote
+				var h = [size_t](h)
+				for i = 0, len do
+					h = k:[method](h)
+				end
+				in h
+			end
+		end
+	end
+	return `memhash(size_t, k, h, len)
+end)
 
 --readfile -------------------------------------------------------------------
 
@@ -911,13 +947,11 @@ local terra readfile(name: rawstring): {&opaque, int64}
 			var filesize = ftell(f)
 			if filesize > 0 then
 				rewind(f)
-				var out = [&opaque](new(uint8, filesize))
-				if out ~= nil then
-					defer C.free(out)
-					if fread(out, 1, filesize, f) == filesize then
-						return out, filesize
-					end
+				var out = [&opaque](alloc(uint8, filesize))
+				if out ~= nil and fread(out, 1, filesize, f) == filesize then
+					return out, filesize
 				end
+				C.free(out)
 			end
 		end
 	end
