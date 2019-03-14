@@ -1,18 +1,12 @@
 
 --Lua+Terra standard library & flat vocabulary of tools.
 --Written by Cosmin Apreutesei. Public domain.
+
 --Intended to be used as global environment: setfenv(1, require'low').
 
 if not ... then require'low_test'; return; end
 
-local ffi = require'ffi'
-
 --dependencies ---------------------------------------------------------------
-
---Lua libs
-local zone = require'jit.zone'
-local glue = require'glue'
-local pp = require'pp'
 
 --The C namespace: include() and extern() dump symbols here.
 local C = {}; setmetatable(C, C); C.__index = _G
@@ -20,32 +14,20 @@ local low = {}; setmetatable(low, low); low.__index = C
 
 setfenv(1, low)
 
---ternary operator -----------------------------------------------------------
+low.low  = low
+low.C    = C
+low.ffi  = require'ffi'
+low.zone = require'jit.zone'
+low.glue = require'glue'
+low.pp   = require'pp'
 
---NOTE: terralib.select() can also be used but it's not short-circuiting.
-low.iif = macro(function(cond, t, f)
-	return quote var v: t:gettype(); if cond then v = t else v = f end in v end
-end)
-
---OS defines -----------------------------------------------------------------
-
-low.Windows = false
-low.Linux = false
-low.OSX = false
-low.BSD = false
-low.POSIX = false
-low[ffi.os] = true
-
---exposing submodules --------------------------------------------------------
-
-low.ffi = ffi
-low.low = low
-low.C = C
-low.zone = zone
-low.glue = glue
-low.pp = pp
-low.arr = arr
-low.map = map
+glue.autoload(low, {
+	arrview   = function() low.arrview = require'arrayview' end,
+	arr       = function() low.arr = require'dynarray' end,
+	map       = function() low.map = require'khash' end,
+	random    = function() low.random = require'random'.random end,
+	randomize = function() low.randomize = require'random'.randomize end,
+})
 
 --promoting symbols to global ------------------------------------------------
 
@@ -147,7 +129,12 @@ low.band = bit.band
 low.bor = bit.bor
 low.xor = bit.bxor
 
---glue -----------------------------------------------------------------------
+low.Windows = false
+low.Linux = false
+low.OSX = false
+low.BSD = false
+low.POSIX = false
+low[ffi.os] = true
 
 --[[  glue use (promoted symbols not listed)
 
@@ -314,6 +301,13 @@ low.newstruct = terralib.types.newstruct
 function low.istuple(T)
 	return type(T) == 'terratype' and T.convertible == 'tuple'
 end
+
+--ternary operator -----------------------------------------------------------
+
+--NOTE: terralib.select() can also be used but it's not short-circuiting.
+low.iif = macro(function(cond, t, f)
+	return quote var v: t:gettype(); if cond then v = t else v = f end in v end
+end)
 
 --struct packing constructor -------------------------------------------------
 
@@ -863,7 +857,7 @@ low.new = macro(function(T, len, ...)
 			return quote
 				var p = alloc(T, len)
 				for i=0,len do
-					(p+i):init([init_args])
+					p[i]:init([init_args])
 				end
 				in p
 			end
@@ -886,9 +880,13 @@ low.memfree = macro(function(p, nilvalue)
 	end
 end)
 
---note the necessity to pass a `len` if freeing an array of objects that
---have a free() method, and the necessity to use memfree() instead of this
---function if the buffer doesn't own the objects but only holds a copy.
+--Note the necessity to pass a `len` if freeing an array of objects that
+--have a free() method, and the necessity to use memfree() instead of free()
+--if the buffer doesn't own the objects it contains but only holds a copy,
+--or if inside the buffer's free() method if the buffer owns its memory.
+--Normally a buffer doesn't own its memory, its container does, except for
+--opaque handlers which allocate and free themselves with their own API.
+--For those, call their own free method and nil the pointer manually instead.
 low.free = macro(function(p, len, nilvalue)
 	nilvalue = nilvalue or `nil
 	len = len or 1
@@ -906,7 +904,7 @@ low.free = macro(function(p, len, nilvalue)
 		else
 			return quote
 				for i=0,len do
-					(p+i):free()
+					p[i]:free()
 				end
 				C.free(p)
 				p = nilvalue
@@ -925,7 +923,8 @@ low.fill = macro(function(lval, val, len)
 	end
 	val = val or 0
 	len = len or 1
-	local size = sizeof(lval:gettype().type)
+	local T = assert(lval:gettype().type, 'pointer expected, got ', lval:gettype())
+	local size = sizeof(T)
 	return quote
 		assert(len >= 0)
 		memset(lval, val, size * len)
@@ -1001,7 +1000,7 @@ low.memhash = macro(function(size_t, k, h, len) --FNV-1A hash
 	local size_t = size_t:astype()
 	local T = assert(k:gettype().type, 'pointer expected, got ', k:gettype())
 	local len = len or 1
-	h = h or 0x811C9DC5
+	h = h and h ~= 0 and h or 0x811C9DC5
 	return quote
 		var d = [size_t](h)
 		var k = [&int8](k)
@@ -1098,7 +1097,7 @@ low.freelist = memoize(function(T)
 	return freelist
 end)
 
---building to dll for Lua consumption ----------------------------------------
+--building to dll for LuaJIT ffi consumption ---------------------------------
 
 --Features:
 -- * supports publishing terra functions and named terra structs with methods.
@@ -1442,13 +1441,5 @@ ffi.metatype(']]..name..[[', {
 
 	return self
 end
-
-autoload(low, {
-	arrview   = function() low.arrview = require'arrayview' end,
-	arr       = function() low.arr = require'dynarray' end,
-	map       = function() low.map = require'khash' end,
-	random    = function() low.random = require'random'.random end,
-	randomize = function() low.randomize = require'random'.randomize end,
-})
 
 return low
