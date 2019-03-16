@@ -790,8 +790,8 @@ low.assertf = glue.assert
 
 local clock
 if Windows then
-	extern('QueryPerformanceFrequency', {&int64}->int32)
-	extern('QueryPerformanceCounter', {&int64}->int32)
+	extern('QueryPerformanceFrequency', {&int64} -> int32)
+	extern('QueryPerformanceCounter',   {&int64} -> int32)
 	linklibrary'kernel32'
 	local inv_qpf = global(double, 0)
 	local terra init()
@@ -803,7 +803,7 @@ if Windows then
 		if inv_qpf == 0 then init() end
 		var t: int64
 		assert(QueryPerformanceCounter(&t) ~= 0)
-		return [double](t) * inv_qpf
+		return t * inv_qpf
 	end
 elseif Linux then
 	--TODO: finish and test this
@@ -820,7 +820,7 @@ elseif OSX then
 		return [double](mach_absolute_time())
 	end
 end
-low.clock = macro(clock, terralib.currenttimeinseconds)
+low.clock = macro(function() return `clock() end, terralib.currenttimeinseconds)
 
 --typed malloc ---------------------------------------------------------------
 
