@@ -293,10 +293,11 @@ low.num = double --Lua-compat type
 low.codepoint = uint32
 low.offsetof = terralib.offsetof
 
-pr = terralib.printraw
+low.pr = terralib.printraw
 low.linklibrary = terralib.linklibrary
 low.overload = terralib.overloadedfunction
 low.newstruct = terralib.types.newstruct
+low.includecstring = terralib.includecstring
 
 function low.istuple(T)
 	return type(T) == 'terratype' and T.convertible == 'tuple'
@@ -442,6 +443,23 @@ function low.wrapopaque(T)
 	return getentries(T, function() return {} end)
 end
 
+--make all methods inline, except some (useful for containers).
+--A syntax for method annotations would remove the need for this hack.
+function low.setinlined(methods, include)
+	include = include or pass
+	for name,m in pairs(methods) do
+		if m.setinlined and include(name, 1, m) then
+			m:setinlined(true)
+		elseif m.definitions then
+			for i,m in ipairs(m.definitions) do
+				if include(name, i, m) then
+					m:setinlined(true)
+				end
+			end
+		end
+	end
+end
+
 --C include system -----------------------------------------------------------
 
 local platos = {Windows = 'mingw', Linux = 'linux', OSX = 'osx'}
@@ -518,8 +536,8 @@ low.atan2  = macro(function(y, x) return `C.atan2(y, x) end, math.sin)
 low.deg    = macro(function(r) return `r * (180.0 / PI) end, math.deg)
 low.rad    = macro(function(d) return `d * (PI / 180.0) end, math.rad)
 --go full Pascal :)
-low.inc    = macro(function(lval, i) i=i or 1; return quote lval = lval + i in lval end end)
-low.dec    = macro(function(lval, i) i=i or 1; return quote lval = lval - i in lval end end)
+low.inc    = macro(function(x, i) i=i or 1; return quote x = x + i in x end end)
+low.dec    = macro(function(x, i) i=i or 1; return quote x = x - i in x end end)
 low.swap   = macro(function(a, b) return quote var c = a; a = b; b = c end end)
 low.isodd  = macro(function(x) return `x % 2 == 1 end)
 low.iseven = macro(function(x) return `x % 2 == 0 end)
@@ -964,8 +982,8 @@ local mt_eq = macro(function(a, b) return `a:__eq(b) end)
 
 low.equal = macro(function(p1, p2, len)
 	len = len or 1
-	local T1 = p1:gettype().type
-	local T2 = p2:gettype().type
+	local T1 = assert(p1:gettype().type, 'pointer expected, got ', p1:gettype())
+	local T2 = assert(p2:gettype().type, 'pointer expected, got ', p2:gettype())
 	--TODO: check if T1 can be cast to T2 or viceversa first!
 	assert(T1 == T2, 'equal() type mismatch ', T1, ' vs ', T2)
 	local T = T1
