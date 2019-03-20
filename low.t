@@ -29,6 +29,16 @@ glue.autoload(low, {
 	randomize = function() low.randomize = require'random'.randomize end,
 })
 
+local require = require
+_G.require = function(mod)
+	zone'require'
+	zone('require_'..mod)
+	local ret = require(mod)
+	zone()
+	zone()
+	return ret
+end
+
 --promoting symbols to global ------------------------------------------------
 
 --[[  Lua 5.1 std library use (promoted symbols not listed)
@@ -297,10 +307,24 @@ low.pr = terralib.printraw
 low.linklibrary = terralib.linklibrary
 low.overload = terralib.overloadedfunction
 low.newstruct = terralib.types.newstruct
-low.includecstring = terralib.includecstring
+low.includecstring = function(...)
+	zone'includecstring'
+	local C = terralib.includecstring(...)
+	zone()
+	return C
+end
 
-function low.istuple(T)
+function terralib.irtypes.Type.istuple(T)
 	return type(T) == 'terratype' and T.convertible == 'tuple'
+end
+
+terralib.irtypes['quote'].istype = function(self)
+	return self.tree:is'luaobject' and terralib.irtypes.Type:isclassof(self.tree.value)
+end
+
+terralib.irtypes['quote'].getpointertype = function(self)
+	local T = self:gettype()
+	return assert(T:ispointer() and T.type, 'pointer expected, got ', T)
 end
 
 --ternary operator -----------------------------------------------------------
@@ -309,6 +333,12 @@ end
 low.iif = macro(function(cond, t, f)
 	return quote var v: t:gettype(); if cond then v = t else v = f end in v end
 end)
+
+--getmethod that doesn't crash -----------------------------------------------
+
+function low.getmethod(T, name)
+	return T.getmethod and T:getmethod(name) or nil
+end
 
 --struct packing constructor -------------------------------------------------
 
@@ -364,11 +394,11 @@ local function after(mm, T, f, ...)
 	return override(mm, T, f, ...)
 end
 
-function low.entrymissing  (T, f) return override('__entrymissing', T, f, true) end
-function low.methodmissing (T, f) return override('__methodmissing', T, f, true) end
-function low.setentry      (T, f) return override('__setentry', T, f, true) end
-function low.getentries    (T, f) return override('__getentries', T, f) end
-function low.getmethod     (T, f) return override('__getmethod', T, memoize(f)) end
+function low.override_entrymissing    (T, f) return override('__entrymissing', T, f, true) end
+function low.override_methodmissing   (T, f) return override('__methodmissing', T, f, true) end
+function low.override_setentry        (T, f) return override('__setentry', T, f, true) end
+function low.override_getentries      (T, f) return override('__getentries', T, f) end
+function low.override_getmethod       (T, f) return override('__getmethod', T, memoize(f)) end
 
 function low.before_entrymissing  (T, f) return before('__entrymissing', T, f, true) end
 function low.before_methodmissing (T, f) return before('__methodmissing', T, f, true) end
@@ -376,11 +406,11 @@ function low.before_setentry      (T, f) return before('__setentry', T, f, true)
 function low.before_getentries    (T, f) return before('__getentries', T, f) end
 function low.before_getmethod     (T, f) return before('__getmethod', T, memoize(f)) end
 
-function low.after_entrymissing  (T, f) return after('__entrymissing', T, f, true) end
-function low.after_methodmissing (T, f) return after('__methodmissing', T, f, true) end
-function low.after_setentry      (T, f) return after('__setentry', T, f, true) end
-function low.after_getentries    (T, f) return after('__getentries', T, f) end
-function low.after_getmethod     (T, f) return after('__getmethod', T, memoize(f)) end
+function low.after_entrymissing   (T, f) return after('__entrymissing', T, f, true) end
+function low.after_methodmissing  (T, f) return after('__methodmissing', T, f, true) end
+function low.after_setentry       (T, f) return after('__setentry', T, f, true) end
+function low.after_getentries     (T, f) return after('__getentries', T, f) end
+function low.after_getmethod      (T, f) return after('__getmethod', T, memoize(f)) end
 
 --activate macro-based assignable properties in structs.
 function low.addproperties(T, props)
@@ -440,7 +470,7 @@ end
 --wrapping opaque structs declared in C headers
 --workaround for terra issue #351.
 function low.wrapopaque(T)
-	return getentries(T, function() return {} end)
+	return override_getentries(T, function() return {} end)
 end
 
 --make all methods inline, except some (useful for containers).
@@ -458,6 +488,15 @@ function low.setinlined(methods, include)
 			end
 		end
 	end
+end
+
+--compile-time speed probing -------------------------------------------------
+
+local t0 = terralib.currenttimeinseconds()
+local function probe_lua(...)
+	local t = terralib.currenttimeinseconds()
+	print(format('%.2fs', t - t0), ...)
+	t0 = t
 end
 
 --C include system -----------------------------------------------------------
@@ -490,9 +529,11 @@ terralib.includec = memoize(function(header, ...)
 end)
 
 --terralib.includec variant that dumps symbols into low.C.
-function low.include(header)
+function low.include(header,...)
 	zone'include'
-	update(C, terralib.includec(header))
+	zone('include_'..header)
+	update(C, terralib.includec(header,...))
+	zone()
 	zone()
 	return C
 end
@@ -503,13 +544,45 @@ function low.extern(name, T)
 	return func
 end
 
-function C:__call(cstring)
-	return update(self, terralib.includecstring(cstring))
+function C:__call(cstring, ...)
+	return update(self, terralib.includecstring(cstring, ...))
+end
+
+--forward ffi.cdef() calls to includecstring() so that Terra can use ffi
+--cdefs from LuaJIT C bindings instead of loading original header files
+--which can load up to 10x slower.
+local ffi_builtin_types = [[
+
+typedef          char      int8_t;
+typedef unsigned char      uint8_t;
+typedef          short     int16_t;
+typedef unsigned short     uint16_t;
+typedef          int       int32_t;
+typedef unsigned int       uint32_t;
+typedef          long long int64_t;
+typedef unsigned long long uint64_t;
+
+typedef uint64_t size_t;
+typedef int64_t  ptrdiff_t;
+
+]]
+function low.require_h(...)
+	local cdef = ffi.cdef
+	ffi.cdef = function(s)
+		C(ffi_builtin_types..s,
+			--enums are anonymized in some headers because they are boxed in
+			--LuaJIT, but C complains about that.
+			{'-Wno-missing-declarations'})
+	end
+	for i=1,select('#',...) do
+		require((select(i,...)))
+	end
+	ffi.cdef = cdef
 end
 
 --stdlib dependencies --------------------------------------------------------
 
---TODO: manually type only what we use from these.
+--loading these takes 0.1s on Windows.
 include'stdio.h'
 include'stdlib.h'
 include'string.h'
@@ -840,6 +913,46 @@ elseif OSX then
 end
 low.clock = macro(function() return `clock() end, terralib.currenttimeinseconds)
 
+local t0 = global(double, 0.0)
+local function probe_terra(...)
+	local args = {...}
+	return quote
+		var t = clock()
+		if t0 == 0 then t0 = t end
+		pf('%.2fs', t - t0)
+		print(args)
+		t0 = t
+	end
+end
+low.probe = macro(probe_terra, probe_lua)
+
+--call a method on each element of an array ----------------------------------
+
+local empty = {}
+local function args(...) return select('#',...) > 0 and {...} or empty end
+
+low.call = macro(function(t, method, len, ...)
+	len = len or 1
+	method = method:asvalue()
+	local T = t:gettype()
+	if T:ispointer() then
+		T = T.type
+	end
+	if getmethod(T, method) then
+		local args = args(...)
+		if len == 1 then
+			return quote t:[method]([args]) in t end
+		else
+			return quote
+				for i=0,len do
+					(t+i):[method]([args])
+				end
+				in t
+			end
+		end
+	end
+end)
+
 --typed malloc ---------------------------------------------------------------
 
 low.alloc = macro(function(T, len, oldp)
@@ -853,33 +966,18 @@ low.alloc = macro(function(T, len, oldp)
 end)
 
 low.realloc = macro(function(p, len) --also works as free() when len = 0
-	local T = assert(p:gettype().type, 'pointer expected, got ', p:gettype())
+	local T = p:getpointertype()
 	return `alloc(T, len, p)
 end)
 
 --calls init() on all elements or otherwise zeroes the memory.
-local empty = {}
 low.new = macro(function(T, len, ...)
 	len = len or 1
 	T = T:astype()
-	local init = T.getmethod and T:getmethod'init'
+	local init = getmethod(T, 'init')
 	if init then
-		local init_args = #init.type.parameters > 1 and {...} or empty
-		if len == 1 then
-			return quote
-				var p = alloc(T, len)
-				p:init([init_args])
-				in p
-			end
-		else
-			return quote
-				var p = alloc(T, len)
-				for i=0,len do
-					p[i]:init([init_args])
-				end
-				in p
-			end
-		end
+		local init_args = args(...)
+		return `call(alloc(T, len), 'init', [init_args])
 	else
 		return quote
 			assert(len >= 0)
@@ -909,21 +1007,11 @@ low.free = macro(function(p, len, nilvalue)
 	nilvalue = nilvalue or `nil
 	len = len or 1
 	local T = p:gettype().type
-	local free = T.getmethod and T:getmethod'free'
+	local free = getmethod(T, 'free')
 	if free then
-		if len == 1 then
-			return quote
-				if p ~= nil then
-					p:free()
-					C.free(p)
-					p = nilvalue
-				end
-			end
-		else
-			return quote
-				for i=0,len do
-					p[i]:free()
-				end
+		return quote
+			if p ~= nil then
+				call(p, 'free', len)
 				C.free(p)
 				p = nilvalue
 			end
@@ -941,7 +1029,7 @@ low.fill = macro(function(lval, val, len)
 	end
 	val = val or 0
 	len = len or 1
-	local T = assert(lval:gettype().type, 'pointer expected, got ', lval:gettype())
+	local T = lval:getpointertype()
 	local size = sizeof(T)
 	return quote
 		assert(len >= 0)
@@ -982,15 +1070,15 @@ local mt_eq = macro(function(a, b) return `a:__eq(b) end)
 
 low.equal = macro(function(p1, p2, len)
 	len = len or 1
-	local T1 = assert(p1:gettype().type, 'pointer expected, got ', p1:gettype())
-	local T2 = assert(p2:gettype().type, 'pointer expected, got ', p2:gettype())
+	local T1 = p1:getpointertype()
+	local T2 = p2:getpointertype()
 	--TODO: check if T1 can be cast to T2 or viceversa first!
 	assert(T1 == T2, 'equal() type mismatch ', T1, ' vs ', T2)
 	local T = T1
 	--check if elements must be compared via `==` operator.
 	--floats can't be memcmp'ed since they may not be normalized.
 	local must_op = T.metamethods and T.metamethods.__eq and op_eq
-	local must_mt = T.getmethod and T:getmethod'__eq' and mt_eq
+	local must_mt = getmethod(T, '__eq') and mt_eq
 	local eq = must_op or must_mt or (T:isfloat() and op_eq)
 	if eq then
 		if len == 1 then
@@ -1016,7 +1104,7 @@ end)
 
 low.memhash = macro(function(size_t, k, h, len) --FNV-1A hash
 	local size_t = size_t:astype()
-	local T = assert(k:gettype().type, 'pointer expected, got ', k:gettype())
+	local T = k:getpointertype()
 	local len = len or 1
 	h = h and h ~= 0 and h or 0x811C9DC5
 	return quote
@@ -1033,7 +1121,7 @@ low.hash = macro(function(size_t, k, h, len)
 	len = len or 1
 	h = h or 0
 	local size_t = size_t:astype()
-	local T = assert(k:gettype().type, 'pointer expected, got ', k:gettype())
+	local T = k:getpointertype()
 	if T.getmethod then
 		local method = '__hash'..(sizeof(size_t) * 8)
 		if T:getmethod(method) then
@@ -1051,6 +1139,18 @@ low.hash = macro(function(size_t, k, h, len)
 		end
 	end
 	return `memhash(size_t, k, h, len)
+end)
+
+--runtime sizeof -------------------------------------------------------------
+
+low.memsize = macro(function(t)
+	if t:istype() then return `sizeof(t) end
+	local T = t:gettype()
+	if getmethod(T, '__memsize') then
+		return `t:__memsize()
+	else
+		return `sizeof(T)
+	end
 end)
 
 --readfile -------------------------------------------------------------------
@@ -1138,7 +1238,7 @@ function low.publish(modulename)
 	local enums = {}
 
 	function self:__call(T, public_methods, opaque)
-		if type(T) == 'terrafunction' or (T:isstruct() and not istuple(T)) then
+		if type(T) == 'terrafunction' or (T:isstruct() and not T:istuple()) then
 			T.opaque = opaque
 			T.public_methods = public_methods
 			add(objects, T)
@@ -1241,7 +1341,7 @@ function low.publish(modulename)
 			local typename = T.metamethods and T.metamethods.__typename_ffi
 			local typename = typename
 				and (type(typename) == 'string' and typename or typename(T))
-			if istuple(T) then
+			if T:istuple() then
 				typename = typename or clean_typename(tuple_typename(T))
 				cdef_tuple(T, typename)
 				typedef_struct(typename)
@@ -1428,6 +1528,11 @@ ffi.metatype(']]..name..[[', {
 		return self:binpath(modulename..'.o')
 	end
 
+	function self:sofile()
+		local soext = {Windows = 'dll', OSX = 'dylib', Linux = 'so'}
+		return self:binpath(modulename..'.'..soext[ffi.os])
+	end
+
 	function self:saveobj()
 		zone'saveobj'
 		terralib.saveobj(self:objfile(), 'object', saveobj_table)
@@ -1440,21 +1545,31 @@ ffi.metatype(']]..name..[[', {
 
 	function self:linkobj(linkto)
 		zone'linkobj'
-		local soext = {Windows = 'dll', OSX = 'dylib', Linux = 'so'}
-		local sofile = self:binpath(modulename..'.'..soext[ffi.os])
 		local linkargs = linkto and '-l'..concat(linkto, ' -l') or ''
-		local cmd = 'gcc '..self:objfile()..' -shared '..'-o '..sofile
+		local cmd = 'gcc '..self:objfile()..' -shared '..'-o '..self:sofile()
 			..' -L'..self:binpath()..' '..linkargs
 		os.execute(cmd)
+		zone()
+	end
+
+	--TODO: make this work. Doesn't export symbols on Windows.
+	function self:savelibrary(linkto)
+		zone'savelibrary'
+		local linkargs = linkto and '-l'..concat(linkto, ' -l') or ''
+		terralib.saveobj(self:sofile(), 'sharedlibrary', saveobj_table, linkargs)
 		zone()
 	end
 
 	function self:build(opt)
 		opt = opt or {}
 		self:savebinding()
-		self:saveobj()
-		self:linkobj(opt.linkto)
-		self:removeobj()
+		if true then
+			self:saveobj()
+			self:linkobj(opt.linkto)
+			self:removeobj()
+		else
+			self:savelibrary(opt.linkto)
+		end
 	end
 
 	return self
