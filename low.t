@@ -853,6 +853,7 @@ end)
 --assert ---------------------------------------------------------------------
 
 low.assert = macro(function(expr, msg)
+	if NOASSERTS then return `expr end
 	return quote
 		if not expr then
 			var stderr = stderr()
