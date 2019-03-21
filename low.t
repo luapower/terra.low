@@ -919,7 +919,7 @@ local function probe_terra(...)
 	return quote
 		var t = clock()
 		if t0 == 0 then t0 = t end
-		pf('%.2fs', t - t0)
+		pf('%.2fs\t', t - t0)
 		print(args)
 		t0 = t
 	end
@@ -950,6 +950,8 @@ low.call = macro(function(t, method, len, ...)
 				in t
 			end
 		end
+	else
+		return quote end
 	end
 end)
 
@@ -1073,7 +1075,7 @@ low.equal = macro(function(p1, p2, len)
 	local T1 = p1:getpointertype()
 	local T2 = p2:getpointertype()
 	--TODO: check if T1 can be cast to T2 or viceversa first!
-	assert(T1 == T2, 'equal() type mismatch ', T1, ' vs ', T2)
+	assert(T1 == T2, 'equal() type mismatch ', T1, ' vs ', T2, traceback())
 	local T = T1
 	--check if elements must be compared via `==` operator.
 	--floats can't be memcmp'ed since they may not be normalized.
@@ -1140,6 +1142,15 @@ low.hash = macro(function(size_t, k, h, len)
 	end
 	return `memhash(size_t, k, h, len)
 end)
+
+--make sizeof work with values too -------------------------------------------
+
+local sizeof = sizeof
+low.sizeof = macro(function(t)
+	if t:istype() then return `sizeof(t) end
+	local T = t:gettype()
+	return `sizeof(T)
+end, sizeof)
 
 --runtime sizeof -------------------------------------------------------------
 
