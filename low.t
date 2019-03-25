@@ -22,9 +22,9 @@ low.glue = require'glue'
 low.pp   = require'pp'
 
 glue.autoload(low, {
-	arrview   = function() low.arrview = require'arrayview' end,
-	arr       = function() low.arr = require'dynarray' end,
-	map       = function() low.map = require'khash' end,
+	arrview   = function() require'arrayview' end,
+	arr       = function() require'dynarray' end,
+	map       = function() require'khash' end,
 	random    = function() low.random = require'random'.random end,
 	randomize = function() low.randomize = require'random'.randomize end,
 })
@@ -112,7 +112,7 @@ Modules:
 
 Used:
 	ffi.new
-	ffi.string ffi.cast ffi.sizeof ffi.istype ffi.typeof ffi.offsetof
+	ffi.string ffi.sizeof ffi.istype ffi.typeof ffi.offsetof
 	ffi.copy ffi.fill
 	ffi.load ffi.cdef
 	ffi.metatype ffi.gc
@@ -131,6 +131,8 @@ Never use:
 	jit.attach jit.util jit.opt
 
 ]]
+
+low.cast = ffi.cast
 
 low.bnot = bit.bnot
 low.shl = bit.lshift
@@ -620,7 +622,7 @@ low.nan    = 0/0
 low.maxint = int:max()
 low.minint = int:min()
 
---round up an integer to the next integer that is a power of 2.
+--find the smallest n for which x <= 2^n.
 low.nextpow2 = macro(function(x)
 	local T = x:gettype()
 	if T:isintegral() then
@@ -639,7 +641,7 @@ low.nextpow2 = macro(function(x)
 		end
 	end
 	error('unsupported type ', x:gettype())
-end)
+end, glue.nextpow2)
 
 --math from glue -------------------------------------------------------------
 
@@ -1010,17 +1012,12 @@ low.free = macro(function(p, len, nilvalue)
 	nilvalue = nilvalue or `nil
 	len = len or 1
 	local T = p:gettype().type
-	local free = getmethod(T, 'free')
-	if free then
-		return quote
-			if p ~= nil then
-				call(p, 'free', len)
-				C.free(p)
-				p = nilvalue
-			end
+	return quote
+		if p ~= nil then
+			call(p, 'free', len)
+			C.free(p)
+			p = nilvalue
 		end
-	else
-		return quote memfree(p, nilvalue) end
 	end
 end)
 
@@ -1250,7 +1247,9 @@ function low.publish(modulename)
 	local enums = {}
 
 	function self:__call(T, public_methods, opaque)
-		if type(T) == 'terrafunction' or (T:isstruct() and not T:istuple()) then
+		if type(T) == 'terrafunction'
+			or (type(T) == 'terratype' and T:isstruct() and not T:istuple())
+		then
 			T.opaque = opaque
 			T.public_methods = public_methods
 			add(objects, T)
