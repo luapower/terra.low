@@ -975,22 +975,6 @@ low.realloc = macro(function(p, len) --also works as free() when len = 0
 	return `alloc(T, len, p)
 end)
 
---calls init() on all elements or otherwise zeroes the memory.
-low.new = macro(function(T, len, ...)
-	len = len or 1
-	T = T:astype()
-	local init = getmethod(T, 'init')
-	if init then
-		local init_args = args(...)
-		return `call(alloc(T, len), 'init', [init_args])
-	else
-		return quote
-			assert(len >= 0)
-			var p = iif(len > 0, [&T](C.calloc(len, sizeof(T))), nil) in p
-		end
-	end
-end)
-
 low.memfree = macro(function(p, nilvalue)
 	nilvalue = nilvalue or `nil
 	return quote
