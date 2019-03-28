@@ -309,12 +309,23 @@ low.pr = terralib.printraw
 low.linklibrary = terralib.linklibrary
 low.overload = terralib.overloadedfunction
 low.newstruct = terralib.types.newstruct
+
 low.includecstring = function(...)
 	zone'includecstring'
 	local C = terralib.includecstring(...)
 	zone()
 	return C
 end
+
+--terralib extensions
+
+--make sizeof work with values too
+local sizeof = sizeof
+low.sizeof = macro(function(t)
+	if t:istype() then return `sizeof(t) end
+	local T = t:gettype()
+	return `sizeof(T)
+end, sizeof)
 
 function terralib.irtypes.Type.istuple(T)
 	return type(T) == 'terratype' and T.convertible == 'tuple'
@@ -327,6 +338,10 @@ end
 terralib.irtypes['quote'].getpointertype = function(self)
 	local T = self:gettype()
 	return assert(T:ispointer() and T.type, 'pointer expected, got ', T)
+end
+
+function low.offsetafter(T, field)
+	return offsetof(T, field) + sizeof(T:getfield(field).type)
 end
 
 --ternary operator -----------------------------------------------------------
@@ -355,10 +370,32 @@ local function entry_size(e)
 		return size
 	end
 end
-function low.packstruct(T)
-	sort(T.entries, function(e1, e2)
+local function byfield(e, name) return e.field == name end
+function low.packstruct(T, first_field, last_field)
+	local i1 = first_field and indexof(first_field, T.entries, byfield)
+	local i2 = last_field  and indexof(last_field, T.entries, byfield)
+	assert(not i1 == not i2)
+	local entries = T.entries
+	if i1 then
+		assert(i2 > i1) --sort a single field?
+		entries = {}
+		local inside
+		for i,e in ipairs(T.entries) do
+			if i == i1 then inside = true end
+			if inside then add(entries, e) end
+			if i == i2 then break end
+		end
+	end
+	sort(entries, function(e1, e2)
 		return entry_size(e1) > entry_size(e2)
 	end)
+	if i1 then
+		print(#entries, i1, i2, i2-i1, first_field, last_field)
+		assert(#entries == i2-i1+1)
+		for i = i1, i2 do
+			T.entries[i] = entries[i-i1+1]
+		end
+	end
 end
 
 --extensible struct metamethods ----------------------------------------------
@@ -439,6 +476,7 @@ end
 
 --activate getters and setters in structs.
 function low.gettersandsetters(T)
+	if T.gettersandsetters then return end
 	T.gettersandsetters = true
 	after_entrymissing(T, function(name, obj)
 		if T.addmethods then T.addmethods() end
@@ -489,6 +527,57 @@ function low.setinlined(methods, include)
 				end
 			end
 		end
+	end
+end
+
+--easier way to define common casts.
+function low.newcast(T, fromT, ret)
+	local oldcast = T.metamethods.__cast
+	function T.metamethods.__cast(from, to, exp)
+		if to == T and from == fromT then
+			if type(ret) == 'function' then
+				return ret(exp)
+			else
+				return ret
+			end
+		end
+		if oldcast then
+			return oldcast(from, to, exp)
+		end
+		assert(false, 'invalid cast from ', from, ' to ', to, ': ', exp)
+	end
+end
+
+--pack all or some bool-type fields into a single bitmask field.
+function low.packboolfields(T, fields, MASK)
+	local bool_fields = glue.map(fields or T.entries, function(e)
+		return e.type == bool and e or nil
+	end)
+	if #bool_fields == 0 then return end
+	local MASK = MASK or '_flags'
+	local i = indexof(T, function(e) return e.field == MASK end)
+	local bitmask_field = T.entries[i]
+	if not bitmask_field then
+		local bmtype =
+			   #bool_fields > 32 and uint64
+			or #bool_fields > 16 and uint32
+			or #bool_fields >  8 and uint16
+			or uint8
+		bitmask_field = {field = MASK, type = bmtype}
+		add(T.entries, bitmask_field)
+	end
+	assert(sizeof(bitmask_field.type) >= 2^#bool_fields)
+	gettersandsetters(T)
+	for i,e in ipairs(bool_fields) do
+		i = i - 1
+		T.methods['get_'..e.field] = macro(function(self)
+			return `(self.[MASK] >> i) and 1
+		end)
+		T.methods['set_'..e.field] = macro(function(self, b)
+			return quote
+				self.[MASK] = self.[MASK] ^ ((-y ^ self.[MASK]) and (1 << i))
+			end
+		end)
 	end
 end
 
@@ -995,7 +1084,7 @@ end)
 low.free = macro(function(p, len, nilvalue)
 	nilvalue = nilvalue or `nil
 	len = len or 1
-	local T = p:gettype().type
+	local T = p:getpointertype()
 	return quote
 		if p ~= nil then
 			call(p, 'free', len)
@@ -1007,18 +1096,17 @@ end)
 
 --typed memset ---------------------------------------------------------------
 
-low.fill = macro(function(lval, val, len)
-	if len == nil then --fill(lval, len)
+low.fill = macro(function(p, val, len)
+	if len == nil then --fill(p, len)
 		val, len = nil, val
 	end
 	val = val or 0
 	len = len or 1
-	local T = lval:getpointertype()
-	local size = sizeof(T)
+	local T = p:getpointertype()
 	return quote
 		assert(len >= 0)
-		memset(lval, val, size * len)
-		in lval
+		memset(p, val, sizeof(T) * len)
+		in p
 	end
 end)
 
@@ -1026,8 +1114,8 @@ end)
 
 low.memcopy = macro(function(dst, src, len)
 	len = len or 1
-	local T1 = dst:gettype().type
-	local T2 = src:gettype().type
+	local T1 = dst:getpointertype()
+	local T2 = src:getpointertype()
 	assert(sizeof(T1) == sizeof(T2), 'memcopy() sizeof mismatch ', T1, ' vs ', T2)
 	local T = T1
 	return quote memmove(dst, src, len * sizeof(T)) in dst end
@@ -1042,8 +1130,8 @@ end)
 
 low.memequal = macro(function(p1, p2, len)
 	len = len or 1
-	local T1 = p1:gettype().type
-	local T2 = p2:gettype().type
+	local T1 = p1:getpointertype()
+	local T2 = p2:getpointertype()
 	assert(sizeof(T1) == sizeof(T2), 'memequal() sizeof mismatch ', T1, ' vs ', T2)
 	local T = T1
 	return `memcmp(p1, p2, len * sizeof(T)) == 0
@@ -1125,16 +1213,7 @@ low.hash = macro(function(size_t, k, h, len)
 	return `memhash(size_t, k, h, len)
 end)
 
---make sizeof work with values too -------------------------------------------
-
-local sizeof = sizeof
-low.sizeof = macro(function(t)
-	if t:istype() then return `sizeof(t) end
-	local T = t:gettype()
-	return `sizeof(T)
-end, sizeof)
-
---runtime sizeof -------------------------------------------------------------
+--sizeof of dynamically allocated memory -------------------------------------
 
 low.memsize = macro(function(t)
 	if t:istype() then return `sizeof(t) end
@@ -1142,7 +1221,7 @@ low.memsize = macro(function(t)
 	if getmethod(T, '__memsize') then
 		return `t:__memsize()
 	else
-		return `sizeof(T)
+		return 0
 	end
 end)
 
