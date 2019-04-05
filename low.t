@@ -25,6 +25,7 @@ glue.autoload(low, {
 	arrview   = function() require'arrayview' end,
 	arr       = function() require'dynarray' end,
 	map       = function() require'khash' end,
+	set       = function() require'khash' end,
 	random    = function() low.random = require'random'.random end,
 	randomize = function() low.randomize = require'random'.randomize end,
 })
@@ -351,9 +352,10 @@ low.iif = macro(function(cond, t, f)
 	return quote var v: t:gettype(); if cond then v = t else v = f end in v end
 end)
 
---getmethod that doesn't crash -----------------------------------------------
+--getmethod that doesn't crash and works on pointers -------------------------
 
 function low.getmethod(T, name)
+	if T:ispointer() then T = T.type end
 	return T.getmethod and T:getmethod(name) or nil
 end
 
@@ -549,33 +551,34 @@ function low.newcast(T, fromT, ret)
 end
 
 --pack all or some bool-type fields into a single bitmask field.
-function low.packboolfields(T, fields, MASK)
+function low.packboolfields(T, fields, BITS)
 	local bool_fields = glue.map(fields or T.entries, function(e)
 		return e.type == bool and e or nil
 	end)
 	if #bool_fields == 0 then return end
-	local MASK = MASK or '_flags'
-	local i = indexof(T, function(e) return e.field == MASK end)
-	local bitmask_field = T.entries[i]
-	if not bitmask_field then
+	local BITS = BITS or '_flags'
+	local i = indexof(T, function(e) return e.field == BITS end)
+	local BITS_field = T.entries[i]
+	if not BITS_field then
 		local bmtype =
 			   #bool_fields > 32 and uint64
 			or #bool_fields > 16 and uint32
 			or #bool_fields >  8 and uint16
 			or uint8
-		bitmask_field = {field = MASK, type = bmtype}
-		add(T.entries, bitmask_field)
+		BITS_field = {field = BITS, type = bmtype}
+		add(T.entries, BITS_field)
 	end
-	assert(sizeof(bitmask_field.type) >= 2^#bool_fields)
+	local BITS_T = BITS_field.type
+	assert(sizeof(BITS_T) >= 2^#bool_fields)
 	gettersandsetters(T)
 	for i,e in ipairs(bool_fields) do
 		i = i - 1
 		T.methods['get_'..e.field] = macro(function(self)
-			return `(self.[MASK] >> i) and 1
+			return `self.[BITS] and (1 << i) ~= 0
 		end)
 		T.methods['set_'..e.field] = macro(function(self, b)
 			return quote
-				self.[MASK] = self.[MASK] ^ ((-y ^ self.[MASK]) and (1 << i))
+				self.[BITS] = self.[BITS] ^ ((-[BITS_T](y) ^ self.[BITS]) and (1 << i))
 			end
 		end)
 	end
@@ -642,8 +645,7 @@ end
 --forward ffi.cdef() calls to includecstring() so that Terra can use ffi
 --cdefs from LuaJIT C bindings instead of loading original header files
 --which can load up to 10x slower.
-local ffi_builtin_types = [[
-
+low.builtin_ctypes = [[
 typedef          char      int8_t;
 typedef unsigned char      uint8_t;
 typedef          short     int16_t;
@@ -655,20 +657,35 @@ typedef unsigned long long uint64_t;
 
 typedef uint64_t size_t;
 typedef int64_t  ptrdiff_t;
+typedef uint16_t wchar_t;
 
+// MSVC types
+typedef int8_t  __int8;
+typedef int16_t __int16;
+typedef int32_t __int32;
+typedef int64_t __int64;
 ]]
-function low.require_h(...)
+local load_cdefs = memoize(function(m)
 	local cdef = ffi.cdef
-	ffi.cdef = function(s)
-		C(ffi_builtin_types..s,
-			--enums are anonymized in some headers because they are boxed in
-			--LuaJIT, but C complains about that.
-			{'-Wno-missing-declarations'})
-	end
-	for i=1,select('#',...) do
-		require((select(i,...)))
-	end
+	local t = {}
+	ffi.cdef = function(s) add(t, s) end
+	require(m)
 	ffi.cdef = cdef
+	return t
+end)
+function low.require_h(...)
+	local t = {builtin_ctypes}
+	for i=1,select('#',...) do
+		local m = select(i,...)
+		if type(m) == 'table' then
+			extend(t, m)
+		else
+			extend(t, load_cdefs(m))
+		end
+	end
+	C(concat(t), {'-Wno-missing-declarations'})
+	--^^enums are anonymized in some headers because they are boxed in
+	--LuaJIT, but Clang complains about that hence -Wno-missing-declarations.
 end
 
 --stdlib dependencies --------------------------------------------------------
@@ -1023,14 +1040,19 @@ low.probe = macro(probe_terra, probe_lua)
 local empty = {}
 local function args(...) return select('#',...) > 0 and {...} or empty end
 
+local function cancall(T, method)
+	return getmethod(T, method) and true or false
+end
+low.cancall = macro(function(t, method)
+	method = method:asvalue()
+	local T = t:istype() and t:astype() or t:gettype()
+	return cancall(T, method)
+end, cancall)
+
 low.call = macro(function(t, method, len, ...)
 	len = len or 1
 	method = method:asvalue()
-	local T = t:gettype()
-	if T:ispointer() then
-		T = T.type
-	end
-	if getmethod(T, method) then
+	if getmethod(t:gettype(), method) then
 		local args = args(...)
 		if len == 1 then
 			return quote t:[method]([args]) in t end
