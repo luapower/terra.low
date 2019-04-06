@@ -2,9 +2,9 @@
 setfenv(1, require'low')
 
 local terra test_math()
-	print(floor(5.5), floor([float](5.3f)))
-	print(ceil(5.5), ceil([float](5.3f)))
-	print(sqrt(2), sqrt([float](2)))
+	print('floor', floor(5.5), floor([float](5.3f)))
+	print('ceil', ceil(5.5), ceil([float](5.3f)))
+	print('sqrt', sqrt(2), sqrt([float](2)))
 	print('sin', sin(rad(30)), sin([float](rad(30))))
 	print('cos', cos(rad(30)), cos([float](rad(30))))
 	print('tan', tan(rad(30)), tan([float](rad(30))))
@@ -13,6 +13,16 @@ local terra test_math()
 	print('atan', atan(rad(30)), atan([float](rad(30))))
 	print('atan2', atan2(1, 1), atan([float](1), [float](1)))
 	print('lerp', lerp(([int8])(3), 2, 4, 20, 41.5), lerp(3.15, 2, 4, 20, 40))
+	--integer ceil
+	assert(ceil( 5,  2) ==  6); assert(ceil( 5.0,  2) ==  6)
+	assert(ceil(-5,  2) == -4); assert(ceil(-5.0,  2) == -4)
+	assert(ceil( 5, -2) ==  4); assert(ceil( 5.0, -2) ==  4)
+	assert(ceil(-5, -2) == -6); assert(ceil(-5.0, -2) == -6)
+	--integer round
+	assert(round( 5,  3) ==  6); assert(round( 5.0,  3) ==  6)
+	assert(round(-5,  3) == -6); assert(round(-5.0,  3) == -6)
+	assert(round( 5, -3) ==  6); assert(round( 5.0, -3) ==  6)
+	assert(round(-5, -3) == -6); assert(round(-5.0, -3) == -6)
 end
 test_math()
 

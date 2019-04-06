@@ -574,12 +574,10 @@ function low.packboolfields(T, fields, BITS)
 	for i,e in ipairs(bool_fields) do
 		i = i - 1
 		T.methods['get_'..e.field] = macro(function(self)
-			return `self.[BITS] and (1 << i) ~= 0
+			return `getbit(self.[BITS], i)
 		end)
 		T.methods['set_'..e.field] = macro(function(self, b)
-			return quote
-				self.[BITS] = self.[BITS] ^ ((-[BITS_T](y) ^ self.[BITS]) and (1 << i))
-			end
+			return quote setbit(self.[BITS], i, b) end
 		end)
 	end
 end
@@ -698,14 +696,13 @@ include'math.h'
 
 --math module ----------------------------------------------------------------
 
+--Lua compat
 low.PI     = math.pi
 low.min    = macro(function(a, b) return `iif(a < b, a, b) end, math.min)
 low.max    = macro(function(a, b) return `iif(a > b, a, b) end, math.max)
 low.abs    = macro(function(x) return `iif(x < 0, -x, x) end, math.abs)
-low.floor  = macro(function(x) return `C.floor(x) end, math.floor)
-low.ceil   = macro(function(x) return `C.ceil(x) end, math.ceil)
 low.sqrt   = macro(function(x) return `C.sqrt(x) end, math.sqrt)
-low.pow    = C.pow
+low.pow    = C.pow --beacause ^ means xor in terra
 low.log    = macro(function(x) return `C.log(x) end, math.log)
 low.sin    = macro(function(x) return `C.sin(x) end, math.sin)
 low.cos    = macro(function(x) return `C.cos(x) end, math.cos)
@@ -716,6 +713,7 @@ low.atan   = macro(function(x) return `C.atan(x) end, math.sin)
 low.atan2  = macro(function(y, x) return `C.atan2(y, x) end, math.sin)
 low.deg    = macro(function(r) return `r * (180.0 / PI) end, math.deg)
 low.rad    = macro(function(d) return `d * (PI / 180.0) end, math.rad)
+
 --go full Pascal :)
 low.inc    = macro(function(x, i) i=i or 1; return quote x = x + i in x end end)
 low.dec    = macro(function(x, i) i=i or 1; return quote x = x - i in x end end)
@@ -749,16 +747,58 @@ low.nextpow2 = macro(function(x)
 	error('unsupported type ', x:gettype())
 end, glue.nextpow2)
 
---math from glue -------------------------------------------------------------
+--get the value of x's i'th bit as a bool.
+low.getbit = macro(function(x, i)
+	return `(x and (1 << i)) ~= 0
+end)
+
+--set the value of x's i'th bit with a bool.
+low.setbit = macro(function(x, i, b)
+	local T = x:gettype()
+	return quote x = x ^ (((-[T](b)) ^ x) and (1 << i)) end
+end)
+
+--integer division variants
+
+low.div_up = macro(function(x, p)
+	if x:gettype():isintegral() and p:gettype():isintegral() then
+		return `x / p + iif(x % p ~= 0, [int]((x > 0) == (p > 0)), 0)
+	end
+	return `C.ceil(x / p)
+end)
+
+low.div_down = macro(function(x, p)
+	if x:gettype():isfloat() or p:gettype():isfloat() then
+		return `C.floor(x / p) * p
+	else
+		return `(x / p) * p
+	end
+end)
+
+low.div_nearest = macro(function(x, p)
+	if x:gettype():isintegral() and p:gettype():isintegral() then
+		return `(2*x - p + 2*([int]((x < 0) ~= (p > 0))*p)) / (2*p)
+	end
+	return `C.floor(x / p + .5)
+end)
+
+--math from glue
 
 low.round = macro(function(x, p)
-	if p and p ~= 1 then
-		return `C.floor(x / p + .5) * p
-	else
-		return `C.floor(x + .5)
-	end
+	p = p or 1
+	return `div_nearest(x, p) * p
 end, glue.round)
 low.snap = low.round
+
+low.floor = macro(function(x, p)
+	p = p or 1
+	return `div_down(x, p) * p
+end, glue.floor)
+
+low.ceil = macro(function(x, p)
+	p = p or 1
+	return `div_up(x, p) * p
+end, glue.ceil)
 
 low.clamp = macro(function(x, m, M)
 	return `min(max(x, m), M)
