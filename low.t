@@ -758,6 +758,11 @@ low.setbit = macro(function(x, i, b)
 	return quote x = x ^ (((-[T](b)) ^ x) and (1 << i)) end
 end)
 
+--set multiple bits from src into dest based on mask.
+low.setbits = macro(function(dst, src, mask)
+	return quote dst = (dst and (not mask)) or (src and mask) end
+end)
+
 --integer division variants
 
 low.div_up = macro(function(x, p)
