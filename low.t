@@ -338,6 +338,10 @@ terralib.irtypes['quote'].istype = function(self)
 	return self.tree:is'luaobject' and terralib.irtypes.Type:isclassof(self.tree.value)
 end
 
+terralib.irtypes['quote'].isliteral = function(self)
+	return self.tree:is'literal'
+end
+
 terralib.irtypes['quote'].getpointertype = function(self)
 	local T = self:gettype()
 	return assert(T:ispointer() and T.type, 'pointer expected, got ', T)
@@ -1097,7 +1101,7 @@ low.cancall = macro(function(t, method)
 end, cancall)
 
 low.call = macro(function(t, method, len, ...)
-	len = len or 1
+	len = len and len:isliteral() and len:asvalue() or len or 1
 	method = method:asvalue()
 	if cancall(t:gettype(), method) then
 		local args = args(...)
