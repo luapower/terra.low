@@ -304,6 +304,8 @@ low.char = int8
 low.enum = int8
 low.num = double --Lua-compat type
 low.codepoint = uint32
+low.size_t = uint64
+
 low.offsetof = terralib.offsetof
 
 low.pr = terralib.printraw
@@ -352,7 +354,7 @@ low.iif = macro(function(cond, t, f)
 	return quote var v: t:gettype(); if cond then v = t else v = f end in v end
 end)
 
---getmethod that doesn't crash and works on pointers -------------------------
+--getmethod that works on primitive types and pointers too -------------------
 
 function low.getmethod(T, name)
 	if T:ispointer() then T = T.type end
@@ -1097,7 +1099,7 @@ end, cancall)
 low.call = macro(function(t, method, len, ...)
 	len = len or 1
 	method = method:asvalue()
-	if getmethod(t:gettype(), method) then
+	if cancall(t:gettype(), method) then
 		local args = args(...)
 		if len == 1 then
 			return quote t:[method]([args]) in t end
@@ -1116,52 +1118,63 @@ end)
 
 --typed malloc ---------------------------------------------------------------
 
-low.alloc = macro(function(T, len, oldp)
+local C_realloc = C.realloc
+local C_free = C.free
+
+--prevent use of these variants so we can have a single entry point for
+--dynamic allocations which is alloc().
+C.realloc = nil
+C.free = nil
+C.malloc = nil
+C.calloc = nil
+
+low.alloc = macro(function(T, len, oldp, label)
 	oldp = oldp or `nil
 	len = len or 1
+	label = label or ''
 	T = T:astype()
+	local sz = (T == opaque) and 1 or sizeof(T)
 	return quote
-		assert(len >= 0)
-		var p = iif(len > 0, [&T](C.realloc(oldp, len * sizeof(T))), nil) in p
-	end
-end)
-
-low.realloc = macro(function(p, len) --also works as free() when len = 0
-	local T = p:getpointertype()
-	return `alloc(T, len, p)
-end)
-
-low.memfree = macro(function(p, nilvalue)
-	nilvalue = nilvalue or `nil
-	return quote
-		if p ~= nil then
-			C.free(p)
-			p = nilvalue
+		var p: &T
+		if len > 0 then
+			p = [&T](C_realloc(oldp, len * sz))
+		else
+			assert(len >= 0)
+			C_free(oldp)
+			p = nil
 		end
+		in p
 	end
+end)
+
+low.realloc = macro(function(p, len, label) --works as free() when len = 0
+	label = label or ''
+	local T = p:getpointertype()
+	return `alloc(T, len, p, label)
 end)
 
 --Note the necessity to pass a `len` if freeing an array of objects that
---have a free() method, and the necessity to use memfree() instead of free()
---if the buffer doesn't own the objects it contains but only holds a copy,
---or if inside the buffer's free() method if the buffer owns its memory.
+--have a free() method, and the necessity to use realloc(p, 0) instead of
+--free() if the buffer doesn't own the objects it contains but only holds a
+--copy, or if inside the buffer's free() method if the buffer owns its memory.
 --Normally a buffer doesn't own its memory, its container does, except for
 --opaque handlers which allocate and free themselves with their own API.
 --For those, call their own free method and nil the pointer manually instead.
 low.free = macro(function(p, len, nilvalue)
 	nilvalue = nilvalue or `nil
 	len = len or 1
-	local T = p:getpointertype()
 	return quote
 		if p ~= nil then
 			call(p, 'free', len)
-			C.free(p)
+			realloc(p, 0)
 			p = nilvalue
 		end
 	end
 end)
 
 --typed memset ---------------------------------------------------------------
+
+local C_memset = C.memset; C.memset = nil
 
 low.fill = macro(function(p, val, len)
 	if len == nil then --fill(p, len)
@@ -1172,36 +1185,40 @@ low.fill = macro(function(p, val, len)
 	local T = p:getpointertype()
 	return quote
 		assert(len >= 0)
-		memset(p, val, sizeof(T) * len)
+		C_memset(p, val, sizeof(T) * len)
 		in p
 	end
 end)
 
 --typed memmove --------------------------------------------------------------
 
-low.memcopy = macro(function(dst, src, len)
+local C_memmove = C.memmove; C.memmove = nil
+
+low.bitcopy = macro(function(dst, src, len)
 	len = len or 1
 	local T1 = dst:getpointertype()
 	local T2 = src:getpointertype()
 	assert(sizeof(T1) == sizeof(T2), 'memcopy() sizeof mismatch ', T1, ' vs ', T2)
 	local T = T1
-	return quote memmove(dst, src, len * sizeof(T)) in dst end
+	return quote C_memmove(dst, src, len * sizeof(T)) in dst end
 end)
 
 low.copy = macro(function(dst, src, len)
 	--TODO: check if T1 can be cast to T2 or viceversa and use that instead!
-	return `memcopy(dst, src, len)
+	return `bitcopy(dst, src, len)
 end)
 
 --typed memcmp ---------------------------------------------------------------
 
-low.memequal = macro(function(p1, p2, len)
+local C_memcmp = C.memcmp; C.memcmp = nil
+
+low.bitequal = macro(function(p1, p2, len)
 	len = len or 1
 	local T1 = p1:getpointertype()
 	local T2 = p2:getpointertype()
-	assert(sizeof(T1) == sizeof(T2), 'memequal() sizeof mismatch ', T1, ' vs ', T2)
+	assert(sizeof(T1) == sizeof(T2), 'bitequal() sizeof mismatch ', T1, ' vs ', T2)
 	local T = T1
-	return `memcmp(p1, p2, len * sizeof(T)) == 0
+	return `C_memcmp(p1, p2, len * sizeof(T)) == 0
 end)
 
 local op_eq = macro(function(a, b) return `@a == @b end)
@@ -1217,7 +1234,7 @@ low.equal = macro(function(p1, p2, len)
 	--check if elements must be compared via `==` operator.
 	--floats can't be memcmp'ed since they may not be normalized.
 	local must_op = T.metamethods and T.metamethods.__eq and op_eq
-	local must_mt = getmethod(T, '__eq') and mt_eq
+	local must_mt = not T:ispointer() and getmethod(T, '__eq') and mt_eq
 	local eq = must_op or must_mt or (T:isfloat() and op_eq)
 	if eq then
 		if len == 1 then
@@ -1235,13 +1252,13 @@ low.equal = macro(function(p1, p2, len)
 			end
 		end
 	else --fallback to memcmp
-		return `memequal(p1, p2, len)
+		return `bitequal(p1, p2, len)
 	end
 end)
 
 --default hash function ------------------------------------------------------
 
-low.memhash = macro(function(size_t, k, h, len) --FNV-1A hash
+low.bithash = macro(function(size_t, k, h, len) --FNV-1A hash
 	local size_t = size_t:astype()
 	local T = k:getpointertype()
 	local len = len or 1
@@ -1277,7 +1294,7 @@ low.hash = macro(function(size_t, k, h, len)
 			end
 		end
 	end
-	return `memhash(size_t, k, h, len)
+	return `bithash(size_t, k, h, len)
 end)
 
 --sizeof of dynamically allocated memory -------------------------------------
@@ -1306,7 +1323,7 @@ local terra readfile(name: rawstring): {&opaque, int64}
 				if out ~= nil and fread(out, 1, filesize, f) == filesize then
 					return out, filesize
 				end
-				C.free(out)
+				realloc(out, 0)
 			end
 		end
 	end
@@ -1328,7 +1345,7 @@ low.freelist = memoize(function(T)
 		terra freelist:free()
 			while self.next ~= nil do
 				var next = self.next.next
-				C.free(self.next)
+				realloc(self.next, 0)
 				self.next = next
 			end
 		end
@@ -1364,7 +1381,6 @@ end)
 -- * enable getters and setters via ffi.metatype.
 -- * type name override with `__typename_ffi` metamethod.
 -- * deciding which methods to publish via `public_methods` table.
--- * deciding which methods to publish via `__ismethodpublic` metamethod.
 -- * publishing enum and bitmask values.
 -- * diff-friendly deterministic output.
 
@@ -1381,7 +1397,11 @@ function low.publish(modulename)
 			or (type(T) == 'terratype' and T:isstruct() and not T:istuple())
 		then
 			T.opaque = opaque
-			T.public_methods = public_methods
+			if type(T) == 'terrafunction' then
+				T.ffi_name = public_methods
+			else
+				T.public_methods = public_methods
+			end
 			add(objects, T)
 		elseif type(T) == 'table' and not getmetatable(T) then --plain table: enums
 			update(enums, T)
@@ -1391,9 +1411,11 @@ function low.publish(modulename)
 		return T
 	end
 
-	function self:getenums(moduletable)
+	function self:getenums(moduletable, match)
 		for k,v in pairs(moduletable) do
-			if type(k) == 'string' and type(v) == 'number' and k:upper() == k then
+			if type(k) == 'string' and type(v) == 'number' and k:upper() == k
+				and (not match or k:find(match))
+			then
 				enums[k] = v
 			end
 		end
@@ -1516,8 +1538,10 @@ function low.publish(modulename)
 				return 'void'
 			elseif T:isstruct() then
 				return typename(T)
+			elseif T:isarray() then --TODO: this is invalid syntax
+				return ctype(T.type)..'['..T.N..']'
 			else
-				assert(false, 'NYI: ', tostring(T), T:isarray())
+				assert(false, 'NYI: ', tostring(T))
 			end
 		end
 
@@ -1559,8 +1583,9 @@ function low.publish(modulename)
 			end
 		end
 
-		local function ispublic(T, fname)
-			return not T.public_methods or T.public_methods[fname]
+		local function publicname(T, fname)
+			local name = not T.public_methods or T.public_methods[fname]
+			return type(name) == 'string' and name or (name and fname)
 		end
 
 		local function cdef_methods(T)
@@ -1573,7 +1598,6 @@ function low.publish(modulename)
 					return d1.filename < d2.filename
 				end
 			end
-			local ispublic = T.metamethods.__ismethodpublic or ispublic
 			local name = typename(T)
 			local methods = {}
 			local getters = {}
@@ -1582,7 +1606,8 @@ function low.publish(modulename)
 				return type(v) == 'terrafunction' and v or nil
 			end)
 			for fname, func in sortedpairs(terramethods, cmp) do
-				if ispublic(T, fname) then
+				local fname = publicname(T, fname)
+				if fname then
 					local cname = name..'_'..fname
 					cdef_function(func, cname)
 					local t
@@ -1629,7 +1654,7 @@ ffi.metatype(']]..name..[[', {
 
 		for i,obj in ipairs(objects) do
 			if type(obj) == 'terrafunction' then
-				cdef_function(obj, obj.name)
+				cdef_function(obj, obj.ffi_name or obj.name:gsub('%.', '_'))
 			elseif obj:isstruct() then
 				cdef_struct(obj)
 				cdef_methods(obj)
