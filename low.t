@@ -323,12 +323,11 @@ end
 --terralib extensions
 
 --make sizeof work with values too
-local sizeof = sizeof
+local terra_sizeof = sizeof
 low.sizeof = macro(function(t)
-	if t:istype() then return `sizeof(t) end
-	local T = t:gettype()
-	return `sizeof(T)
-end, sizeof)
+	local T = t:istype() and t:astype() or t:gettype()
+	return `terra_sizeof(T)
+end, terra_sizeof)
 
 function terralib.irtypes.Type.istuple(T)
 	return type(T) == 'terratype' and T.convertible == 'tuple'
@@ -360,7 +359,8 @@ end)
 
 --getmethod that works on primitive types and pointers too -------------------
 
-function low.getmethod(T, name)
+function low.getmethod(t, name)
+	local T = type(t) == 'terratype' and t or t:istype() and t:astype() or t:gettype()
 	if T:ispointer() then T = T.type end
 	return T.getmethod and T:getmethod(name) or nil
 end
@@ -1096,14 +1096,14 @@ local function cancall(T, method)
 end
 low.cancall = macro(function(t, method)
 	method = method:asvalue()
-	local T = t:istype() and t:astype() or t:gettype()
+	local T = type(t) == 'terratype' and t or t:istype() and t:astype() or t:gettype()
 	return cancall(T, method)
 end, cancall)
 
 low.call = macro(function(t, method, len, ...)
 	len = len and len:isliteral() and len:asvalue() or len or 1
 	method = method:asvalue()
-	if cancall(t:gettype(), method) then
+	if cancall(t, method) then
 		local args = args(...)
 		if len == 1 then
 			return quote t:[method]([args]) in t end
@@ -1157,13 +1157,8 @@ low.realloc = macro(function(p, len, label) --works as free() when len = 0
 	return `alloc(T, len, p, label)
 end)
 
---Note the necessity to pass a `len` if freeing an array of objects that
---have a free() method, and the necessity to use realloc(p, 0) instead of
---free() if the buffer doesn't own the objects it contains but only holds a
---copy, or if inside the buffer's free() method if the buffer owns its memory.
---Normally a buffer doesn't own its memory, its container does, except for
---opaque handlers which allocate and free themselves with their own API.
---For those, call their own free method and nil the pointer manually instead.
+--Note the necessity to pass a `len` if freeing an array of objects that have
+--a free() method otherwise only the first element of the array will be freed!
 low.free = macro(function(p, len, nilvalue)
 	nilvalue = nilvalue or `nil
 	len = len or 1
@@ -1173,6 +1168,15 @@ low.free = macro(function(p, len, nilvalue)
 			realloc(p, 0)
 			p = nilvalue
 		end
+	end
+end)
+
+low.new = macro(function(T, ...)
+	local args = args(...)
+	return quote
+		var obj = alloc(T)
+		obj:init([args])
+		in obj
 	end
 end)
 
@@ -1362,10 +1366,6 @@ low.freelist = memoize(function(T)
 				return alloc(T)
 			end
 		end
-		terra freelist:new()
-			var p = self:alloc()
-			return iif(p ~= nil, fill(p), nil)
-		end
 		terra freelist:release(p: &T)
 			var node = [&freelist](p)
 			node.next = self.next
@@ -1404,7 +1404,14 @@ function low.publish(modulename)
 			if type(T) == 'terrafunction' then
 				T.ffi_name = public_methods
 			else
-				T.public_methods = public_methods
+				T.public_methods = public_methods or T.methods
+				if public_methods then
+					for method in pairs(public_methods) do
+						if not getmethod(T, method) then
+							print('Warning: method missing for publishing '..tostring(T)..':'..method..'()')
+						end
+					end
+				end
 			end
 			add(objects, T)
 		elseif type(T) == 'table' and not getmetatable(T) then --plain table: enums
@@ -1596,6 +1603,8 @@ function low.publish(modulename)
 			local function cmp(k1, k2) --declare methods in source code order
 				local d1 = T.methods[k1].definition
 				local d2 = T.methods[k2].definition
+				assert(d1, 'method '..tostring(T)..':'..k1..' has no body')
+				assert(d2, 'method '..tostring(T)..':'..k2..' has no body')
 				if d1.filename == d2.filename then
 					return d1.linenumber < d2.linenumber
 				else

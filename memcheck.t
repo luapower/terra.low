@@ -26,7 +26,7 @@ local terra checkalloc(p: &opaque, oldp: &opaque, len: int64, sz: size_t, elemen
 	end
 
 	if oldp ~= nil then --realloc or free
-		var m = memmap:at(oldp)
+		var m = memmap:at(oldp) --reports double-free
 		if len > 0 then --realloc
 			if p ~= oldp then --rellocated
 				dec(total, m:size())
@@ -51,7 +51,7 @@ local terra checkalloc(p: &opaque, oldp: &opaque, len: int64, sz: size_t, elemen
 
 	if p ~= oldp then
 		if oldp ~= nil and p ~= nil then
-			pfn('>relloc:  %-12s %-8s %x -> %x [%d]', label, element_type, oldp, p, len)
+			--pfn('>relloc:  %-12s %-8s %x -> %x [%d]', label, element_type, oldp, p, len)
 		elseif oldp ~= nil and p == nil then
 			--pfn('>free:    %-12s %-8s %x', label, element_type, oldp)
 		end
