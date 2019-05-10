@@ -40,6 +40,13 @@ _G.require = function(mod)
 	return ret
 end
 
+--create a module table that dynamically inherits from low.
+function low.module()
+	local M = {__index = low}
+	M._M = M
+	return setmetatable(M, M)
+end
+
 --promoting symbols to global ------------------------------------------------
 
 --[[  Lua 5.1 std library use (promoted symbols not listed)
