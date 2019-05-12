@@ -8,43 +8,44 @@ if not ... then require'low_test'; return; end
 
 --dependencies ---------------------------------------------------------------
 
---The C namespace: include() and extern() dump symbols here.
-local C = {}; setmetatable(C, C); C.__index = _G
-local low = {}; setmetatable(low, low); low.__index = C
+local _M --this module, set below
 
-setfenv(1, low)
+--create a module table that dynamically inherits from _M.
+local function module(parent)
+	parent = parent or _M
+	local M = {__index = parent}
+	M._M = M
+	return setmetatable(M, M)
+end
 
-low.low  = low
-low.C    = C
-low.ffi  = require'ffi'
-low.zone = require'jit.zone'
-low.glue = require'glue'
-low.pp   = require'pp'
+local C = module(_G) --the C namespace: include() and extern() dump symbols here.
+_M = module(C) --inherits C instead of polluting it.
+setfenv(1, _M) --globals go to _M from here on.
 
-glue.autoload(low, {
-	arrview   = function() require'arrayview' end,
-	arr       = function() require'dynarray' end,
-	map       = function() require'khash' end,
-	set       = function() require'khash' end,
-	random    = function() low.random = require'random'.random end,
-	randomize = function() low.randomize = require'random'.randomize end,
+_M.C = C
+_M.module = module
+
+ffi  = require'ffi'
+zone = require'jit.zone'
+glue = require'glue'
+pp   = require'pp'
+
+glue.autoload(_M, {
+	arrview    = 'arrayview',
+	arr        = 'dynarray',
+	map        = 'khash',
+	set        = 'khash',
+	random     = 'random',
+	randomseed = 'random',
 })
 
-local require = require
-_G.require = function(mod)
+require = function(mod)
 	zone'require'
 	zone('require_'..mod)
-	local ret = require(mod)
+	local ret = _G.require(mod)
 	zone()
 	zone()
 	return ret
-end
-
---create a module table that dynamically inherits from low.
-function low.module()
-	local M = {__index = low}
-	M._M = M
-	return setmetatable(M, M)
 end
 
 --promoting symbols to global ------------------------------------------------
@@ -100,18 +101,18 @@ Never use:
 
 ]]
 
-low.push   = table.insert
-low.pop    = table.remove
-low.add    = table.insert
-low.insert = table.insert
-low.concat = table.concat
-low.sort   = table.sort
-low.format = string.format
-low.traceback = debug.traceback
-low.yield    = coroutine.yield
-low.resume   = coroutine.resume
-low.cowrap   = coroutine.wrap
-low.cocreate = coroutine.create
+push   = table.insert
+pop    = table.remove
+add    = table.insert
+insert = table.insert
+concat = table.concat
+sort   = table.sort
+format = string.format
+traceback = debug.traceback
+yield    = coroutine.yield
+resume   = coroutine.resume
+cowrap   = coroutine.wrap
+cocreate = coroutine.create
 
 --[[  LuaJIT 2.1 std library use (promoted symbols not listed)
 
@@ -140,21 +141,21 @@ Never use:
 
 ]]
 
-low.cast = ffi.cast
+cast = ffi.cast
 
-low.bnot = bit.bnot
-low.shl = bit.lshift
-low.shr = bit.rshift
-low.band = bit.band
-low.bor = bit.bor
-low.xor = bit.bxor
+bnot = bit.bnot
+shl  = bit.lshift
+shr  = bit.rshift
+band = bit.band
+bor  = bit.bor
+xor  = bit.bxor
 
-low.Windows = false
-low.Linux = false
-low.OSX = false
-low.BSD = false
-low.POSIX = false
-low[ffi.os] = true
+Windows = false
+Linux = false
+OSX = false
+BSD = false
+POSIX = false
+_M[ffi.os] = true
 
 --[[  glue use (promoted symbols not listed)
 
@@ -186,27 +187,27 @@ Not used:
 
 ]]
 
-low.memoize = glue.memoize --same as terralib.memoize
+memoize = glue.memoize --same as terralib.memoize
 
-low.update    = glue.update
-low.merge     = glue.merge
-low.attr      = glue.attr
-low.count     = glue.count
-low.index     = glue.index
-low.sortedpairs = glue.sortedpairs
+update      = glue.update
+merge       = glue.merge
+attr        = glue.attr
+count       = glue.count
+index       = glue.index
+sortedpairs = glue.sortedpairs
 
-low.indexof   = glue.indexof
-low.append    = glue.append
-low.extend    = glue.extend
+indexof = glue.indexof
+append  = glue.append
+extend  = glue.extend
 
-low.autoload  = glue.autoload
+autoload  = glue.autoload
 
-low.canopen   = glue.canopen
-low.writefile = glue.writefile
-low.lines     = glue.lines
+canopen   = glue.canopen
+writefile = glue.writefile
+lines     = glue.lines
 
-low.pack   = glue.pack
-low.unpack = glue.unpack
+pack   = glue.pack
+unpack = glue.unpack
 
 string.starts = glue.starts
 string.trim   = glue.trim
@@ -305,22 +306,22 @@ Undocumented:
 
 ]]
 
-low.type = terralib.type
+type = terralib.type
 
-low.char = int8
-low.enum = int8
-low.num = double --Lua-compat type
-low.codepoint = uint32
-low.size_t = uint64
+char = int8
+enum = int8
+num = double --Lua-compat type
+codepoint = uint32
+size_t = uint64
 
-low.offsetof = terralib.offsetof
+offsetof = terralib.offsetof
 
-low.pr = terralib.printraw
-low.linklibrary = terralib.linklibrary
-low.overload = terralib.overloadedfunction
-low.newstruct = terralib.types.newstruct
+pr = terralib.printraw
+linklibrary = terralib.linklibrary
+overload = terralib.overloadedfunction
+newstruct = terralib.types.newstruct
 
-low.includecstring = function(...)
+includecstring = function(...)
 	zone'includecstring'
 	local C = terralib.includecstring(...)
 	zone()
@@ -331,7 +332,7 @@ end
 
 --make sizeof work with values too
 local terra_sizeof = sizeof
-low.sizeof = macro(function(t)
+sizeof = macro(function(t)
 	local T = t:istype() and t:astype() or t:gettype()
 	return `terra_sizeof(T)
 end, terra_sizeof)
@@ -353,20 +354,20 @@ terralib.irtypes['quote'].getpointertype = function(self)
 	return assert(T:ispointer() and T.type, 'pointer expected, got ', T)
 end
 
-function low.offsetafter(T, field)
+function offsetafter(T, field)
 	return offsetof(T, field) + sizeof(T:getfield(field).type)
 end
 
 --ternary operator -----------------------------------------------------------
 
 --NOTE: terralib.select() can also be used but it's not short-circuiting.
-low.iif = macro(function(cond, t, f)
+iif = macro(function(cond, t, f)
 	return quote var v: t:gettype(); if cond then v = t else v = f end in v end
 end)
 
 --getmethod that works on primitive types and pointers too -------------------
 
-function low.getmethod(t, name)
+function getmethod(t, name)
 	local T = type(t) == 'terratype' and t or t:istype() and t:astype() or t:gettype()
 	if T:ispointer() then T = T.type end
 	return T.getmethod and T:getmethod(name) or nil
@@ -386,7 +387,7 @@ local function entry_size(e)
 	end
 end
 local function byfield(e, name) return e.field == name end
-function low.packstruct(T, first_field, last_field)
+function packstruct(T, first_field, last_field)
 	local i1 = first_field and indexof(first_field, T.entries, byfield)
 	local i2 = last_field  and indexof(last_field, T.entries, byfield)
 	assert(not i1 == not i2)
@@ -448,26 +449,26 @@ local function after(mm, T, f, ...)
 	return override(mm, T, f, ...)
 end
 
-function low.override_entrymissing    (T, f) return override('__entrymissing', T, f, true) end
-function low.override_methodmissing   (T, f) return override('__methodmissing', T, f, true) end
-function low.override_setentry        (T, f) return override('__setentry', T, f, true) end
-function low.override_getentries      (T, f) return override('__getentries', T, f) end
-function low.override_getmethod       (T, f) return override('__getmethod', T, memoize(f)) end
+function override_entrymissing    (T, f) return override('__entrymissing', T, f, true) end
+function override_methodmissing   (T, f) return override('__methodmissing', T, f, true) end
+function override_setentry        (T, f) return override('__setentry', T, f, true) end
+function override_getentries      (T, f) return override('__getentries', T, f) end
+function override_getmethod       (T, f) return override('__getmethod', T, memoize(f)) end
 
-function low.before_entrymissing  (T, f) return before('__entrymissing', T, f, true) end
-function low.before_methodmissing (T, f) return before('__methodmissing', T, f, true) end
-function low.before_setentry      (T, f) return before('__setentry', T, f, true) end
-function low.before_getentries    (T, f) return before('__getentries', T, f) end
-function low.before_getmethod     (T, f) return before('__getmethod', T, memoize(f)) end
+function before_entrymissing  (T, f) return before('__entrymissing', T, f, true) end
+function before_methodmissing (T, f) return before('__methodmissing', T, f, true) end
+function before_setentry      (T, f) return before('__setentry', T, f, true) end
+function before_getentries    (T, f) return before('__getentries', T, f) end
+function before_getmethod     (T, f) return before('__getmethod', T, memoize(f)) end
 
-function low.after_entrymissing   (T, f) return after('__entrymissing', T, f, true) end
-function low.after_methodmissing  (T, f) return after('__methodmissing', T, f, true) end
-function low.after_setentry       (T, f) return after('__setentry', T, f, true) end
-function low.after_getentries     (T, f) return after('__getentries', T, f) end
-function low.after_getmethod      (T, f) return after('__getmethod', T, memoize(f)) end
+function after_entrymissing   (T, f) return after('__entrymissing', T, f, true) end
+function after_methodmissing  (T, f) return after('__methodmissing', T, f, true) end
+function after_setentry       (T, f) return after('__setentry', T, f, true) end
+function after_getentries     (T, f) return after('__getentries', T, f) end
+function after_getmethod      (T, f) return after('__getmethod', T, memoize(f)) end
 
 --activate macro-based assignable properties in structs.
-function low.addproperties(T, props)
+function addproperties(T, props)
 	props = props or {}
 	T.properties = props
 	return after_entrymissing(T, function(k, self)
@@ -481,7 +482,7 @@ function low.addproperties(T, props)
 end
 
 --forward t.name to t.sub.name (for anonymous structs and such).
-function low.forwardproperties(sub)
+function forwardproperties(sub)
 	return function(T)
 		return after_entrymissing(T, function(k, self)
 			return `self.[sub].[k]
@@ -490,7 +491,7 @@ function low.forwardproperties(sub)
 end
 
 --activate getters and setters in structs.
-function low.gettersandsetters(T)
+function gettersandsetters(T)
 	if T.gettersandsetters then return end
 	T.gettersandsetters = true
 	after_entrymissing(T, function(name, obj)
@@ -511,7 +512,7 @@ end
 --lazy method publishing pattern for containers
 --workaround for terra issue #348.
 --NOTE: __methodmissing is no longer called if __getmethod is present!
-function low.addmethods(T, addmethods_func)
+function addmethods(T, addmethods_func)
 	T.addmethods = function(self, name)
 		T.addmethods = nil
 		addmethods_func()
@@ -524,13 +525,13 @@ end
 
 --wrapping opaque structs declared in C headers
 --workaround for terra issue #351.
-function low.wrapopaque(T)
+function wrapopaque(T)
 	return override_getentries(T, function() return {} end)
 end
 
 --make all methods inline, except some (useful for containers).
 --A syntax for method annotations would remove the need for this hack.
-function low.setinlined(methods, include)
+function setinlined(methods, include)
 	include = include or pass
 	for name,m in pairs(methods) do
 		if m.setinlined and include(name, 1, m) then
@@ -546,7 +547,7 @@ function low.setinlined(methods, include)
 end
 
 --easier way to define common casts.
-function low.newcast(T, fromT, ret)
+function newcast(T, fromT, ret)
 	local oldcast = T.metamethods.__cast
 	function T.metamethods.__cast(from, to, exp)
 		if to == T and from == fromT then
@@ -564,7 +565,7 @@ function low.newcast(T, fromT, ret)
 end
 
 --pack all or some bool-type fields into a single bitmask field.
-function low.packboolfields(T, fields, BITS)
+function packboolfields(T, fields, BITS)
 	local bool_fields = glue.map(fields or T.entries, function(e)
 		return e.type == bool and e or nil
 	end)
@@ -607,34 +608,34 @@ end
 --C include system -----------------------------------------------------------
 
 local platos = {Windows = 'mingw', Linux = 'linux', OSX = 'osx'}
-low.platform = platos[ffi.os]..'64'
+platform = platos[ffi.os]..'64'
 
-low.path_vars = {L = '.', P = platform}
-local function P(s) return s:gsub('$(%a)', low.path_vars) end
+path_vars = {L = '.', P = platform}
+local function P(s) return s:gsub('$(%a)', path_vars) end
 
 --add luapower's standard paths relative to the current directory.
 package.path = package.path .. P'$L/bin/$P/lua/?.lua;$L/?.lua;$L/?/init.lua'
 package.cpath = package.cpath .. P';$L/bin/mingw64/clib/?.dll'
 package.terrapath = package.terrapath .. P'$L/?.t;$L/?/init.t'
 
-low.includec_loaders = {} --{name -> loader(header_name)}
+includec_loaders = {} --{name -> loader(header_name)}
 
-function low.includepath(path)
+function includepath(path)
 	terralib.includepath = terralib.includepath .. P(';'..path)
 end
 
 --overriding this built-in so that modules can depend on it being memoized.
 local terralib_includec = terralib.includec
 terralib.includec = memoize(function(header, ...)
-	for _,loader in pairs(low.includec_loaders) do
+	for _,loader in pairs(includec_loaders) do
 		local C = loader(header, ...)
 		if C then return C end
 	end
 	return terralib_includec(header, ...)
 end)
 
---terralib.includec variant that dumps symbols into low.C.
-function low.include(header,...)
+--terralib.includec variant that dumps symbols into C.
+function include(header,...)
 	zone'include'
 	zone('include_'..header)
 	update(C, terralib.includec(header,...))
@@ -643,7 +644,7 @@ function low.include(header,...)
 	return C
 end
 
-function low.extern(name, T)
+function extern(name, T)
 	local func = terralib.externfunction(name, T)
 	C[name] = func
 	return func
@@ -656,7 +657,7 @@ end
 --forward ffi.cdef() calls to includecstring() so that Terra can use ffi
 --cdefs from LuaJIT C bindings instead of loading original header files
 --which can load up to 10x slower.
-low.builtin_ctypes = [[
+builtin_ctypes = [[
 typedef          char      int8_t;
 typedef unsigned char      uint8_t;
 typedef          short     int16_t;
@@ -684,7 +685,7 @@ local load_cdefs = memoize(function(m)
 	ffi.cdef = cdef
 	return t
 end)
-function low.require_h(...)
+function require_h(...)
 	local t = {builtin_ctypes}
 	for i=1,select('#',...) do
 		local m = select(i,...)
@@ -710,37 +711,37 @@ include'math.h'
 --math module ----------------------------------------------------------------
 
 --Lua compat
-low.PI     = math.pi
-low.min    = macro(function(a, b) return `iif(a < b, a, b) end, math.min)
-low.max    = macro(function(a, b) return `iif(a > b, a, b) end, math.max)
-low.abs    = macro(function(x) return `iif(x < 0, -x, x) end, math.abs)
-low.sqrt   = macro(function(x) return `C.sqrt(x) end, math.sqrt)
-low.pow    = C.pow --beacause ^ means xor in terra
-low.log    = macro(function(x) return `C.log(x) end, math.log)
-low.sin    = macro(function(x) return `C.sin(x) end, math.sin)
-low.cos    = macro(function(x) return `C.cos(x) end, math.cos)
-low.tan    = macro(function(x) return `C.tan(x) end, math.tan)
-low.asin   = macro(function(x) return `C.asin(x) end, math.sin)
-low.acos   = macro(function(x) return `C.acos(x) end, math.sin)
-low.atan   = macro(function(x) return `C.atan(x) end, math.sin)
-low.atan2  = macro(function(y, x) return `C.atan2(y, x) end, math.sin)
-low.deg    = macro(function(r) return `r * (180.0 / PI) end, math.deg)
-low.rad    = macro(function(d) return `d * (PI / 180.0) end, math.rad)
+PI     = math.pi
+min    = macro(function(a, b) return `iif(a < b, a, b) end, math.min)
+max    = macro(function(a, b) return `iif(a > b, a, b) end, math.max)
+abs    = macro(function(x) return `iif(x < 0, -x, x) end, math.abs)
+sqrt   = macro(function(x) return `C.sqrt(x) end, math.sqrt)
+pow    = C.pow --beacause ^ means xor in terra
+log    = macro(function(x) return `C.log(x) end, math.log)
+sin    = macro(function(x) return `C.sin(x) end, math.sin)
+cos    = macro(function(x) return `C.cos(x) end, math.cos)
+tan    = macro(function(x) return `C.tan(x) end, math.tan)
+asin   = macro(function(x) return `C.asin(x) end, math.sin)
+acos   = macro(function(x) return `C.acos(x) end, math.sin)
+atan   = macro(function(x) return `C.atan(x) end, math.sin)
+atan2  = macro(function(y, x) return `C.atan2(y, x) end, math.sin)
+deg    = macro(function(r) return `r * (180.0 / PI) end, math.deg)
+rad    = macro(function(d) return `d * (PI / 180.0) end, math.rad)
 
 --go full Pascal :)
-low.inc    = macro(function(x, i) i=i or 1; return quote x = x + i in x end end)
-low.dec    = macro(function(x, i) i=i or 1; return quote x = x - i in x end end)
-low.swap   = macro(function(a, b) return quote var c = a; a = b; b = c end end)
-low.isodd  = macro(function(x) return `x % 2 == 1 end)
-low.iseven = macro(function(x) return `x % 2 == 0 end)
-low.isnan  = macro(function(x) return `x ~= x end)
-low.inf    = 1/0
-low.nan    = 0/0
-low.maxint = int:max()
-low.minint = int:min()
+inc    = macro(function(x, i) i=i or 1; return quote x = x + i in x end end)
+dec    = macro(function(x, i) i=i or 1; return quote x = x - i in x end end)
+swap   = macro(function(a, b) return quote var c = a; a = b; b = c end end)
+isodd  = macro(function(x) return `x % 2 == 1 end)
+iseven = macro(function(x) return `x % 2 == 0 end)
+isnan  = macro(function(x) return `x ~= x end)
+inf    = 1/0
+nan    = 0/0
+maxint = int:max()
+minint = int:min()
 
 --find the smallest n for which x <= 2^n.
-low.nextpow2 = macro(function(x)
+nextpow2 = macro(function(x)
 	local T = x:gettype()
 	if T:isintegral() then
 		local bytes = sizeof(T)
@@ -761,31 +762,31 @@ low.nextpow2 = macro(function(x)
 end, glue.nextpow2)
 
 --get the value of x's i'th bit as a bool.
-low.getbit = macro(function(x, i)
+getbit = macro(function(x, i)
 	return `(x and (1 << i)) ~= 0
 end)
 
 --set the value of x's i'th bit with a bool.
-low.setbit = macro(function(x, i, b)
+setbit = macro(function(x, i, b)
 	local T = x:gettype()
 	return quote x = x ^ (((-[T](b)) ^ x) and (1 << i)) end
 end)
 
 --set multiple bits from src into dest based on mask.
-low.setbits = macro(function(dst, src, mask)
+setbits = macro(function(dst, src, mask)
 	return quote dst = (dst and (not mask)) or (src and mask) end
 end)
 
 --integer division variants
 
-low.div_up = macro(function(x, p)
+div_up = macro(function(x, p)
 	if x:gettype():isintegral() and p:gettype():isintegral() then
 		return `x / p + iif(x % p ~= 0, [int]((x > 0) == (p > 0)), 0)
 	end
 	return `C.ceil(x / p)
 end)
 
-low.div_down = macro(function(x, p)
+div_down = macro(function(x, p)
 	if x:gettype():isfloat() or p:gettype():isfloat() then
 		return `C.floor(x / p) * p
 	else
@@ -793,7 +794,7 @@ low.div_down = macro(function(x, p)
 	end
 end)
 
-low.div_nearest = macro(function(x, p)
+div_nearest = macro(function(x, p)
 	if x:gettype():isintegral() and p:gettype():isintegral() then
 		return `(2*x - p + 2*([int]((x < 0) ~= (p > 0))*p)) / (2*p)
 	end
@@ -802,34 +803,34 @@ end)
 
 --math from glue
 
-low.round = macro(function(x, p)
+round = macro(function(x, p)
 	p = p or 1
 	return `div_nearest(x, p) * p
 end, glue.round)
-low.snap = low.round
+snap = round
 
-low.floor = macro(function(x, p)
+floor = macro(function(x, p)
 	p = p or 1
 	return `div_down(x, p) * p
 end, glue.floor)
 
-low.ceil = macro(function(x, p)
+ceil = macro(function(x, p)
 	p = p or 1
 	return `div_up(x, p) * p
 end, glue.ceil)
 
-low.clamp = macro(function(x, m, M)
+clamp = macro(function(x, m, M)
 	return `min(max(x, m), M)
 end, glue.clamp)
 
-low.lerp = macro(function(x, x0, x1, y0, y1)
+lerp = macro(function(x, x0, x1, y0, y1)
 	return `[double](y0) + ([double](x)-[double](x0))
 		* (([double](y1)-[double](y0)) / ([double](x1) - [double](x0)))
 end, glue.lerp)
 
 --binary search for an insert position that keeps the array sorted.
 local less = macro(function(t, i, v) return `t[i] <  v end)
-low.binsearch = macro(function(v, t, lo, hi, cmp)
+binsearch = macro(function(v, t, lo, hi, cmp)
 	cmp = cmp or less
 	return quote
 		var lo = [lo]
@@ -855,8 +856,8 @@ low.binsearch = macro(function(v, t, lo, hi, cmp)
 end, glue.binsearch)
 
 --other from glue...
-low.pass = macro(glue.pass, glue.pass)
-low.noop = macro(function() return quote end end, glue.noop)
+pass = macro(glue.pass, glue.pass)
+noop = macro(function() return quote end end, glue.noop)
 
 --stdin/out/err --------------------------------------------------------------
 
@@ -869,17 +870,17 @@ local _stderr = global(&_iobuf, nil)
 local fdopen = Windows and _fdopen or fdopen
 
 --exposed as macros so that they can be opened on demand on the first call.
-low.stdin = macro(function()
+stdin = macro(function()
 	return quote
 		if _stdin == nil then _stdin = fdopen(0, 'r') end in _stdin
 	end
 end)
-low.stdout = macro(function()
+stdout = macro(function()
 	return quote
 		if _stdout == nil then _stdout = fdopen(1, 'w') end in _stdout
 	end
 end)
-low.stderr = macro(function()
+stderr = macro(function()
 	return quote
 		if _stderr == nil then _stderr = fdopen(2, 'w') end in _stderr
 	end
@@ -932,7 +933,7 @@ local function format_arg(arg, fmt, args, freelist, indent)
 	end
 end
 
-low.tostring = macro(function(arg, outbuf, maxlen)
+tostring = macro(function(arg, outbuf, maxlen)
 	local fmt, args, freelist = {}, {}, {}
 	format_arg(arg, fmt, args, freelist, 0)
 	fmt = concat(fmt)
@@ -968,7 +969,7 @@ end, tostring)
 
 --flushed printf -------------------------------------------------------------
 
-low.pfn = macro(function(...)
+pfn = macro(function(...)
 	local args = {...}
 	return quote
 		var stdout = stdout()
@@ -981,7 +982,7 @@ end, function(...)
 	io.stdout:flush()
 end)
 
-low.pf = macro(function(...)
+pf = macro(function(...)
 	local args = {...}
 	return quote
 		var stdout = stdout()
@@ -995,7 +996,7 @@ end)
 
 --Lua-style print ------------------------------------------------------------
 
-low.print = macro(function(...)
+print = macro(function(...)
 	local fmt, args, freelist = {}, {}, {}
 	local n = select('#', ...)
 	for i=1,n do
@@ -1018,7 +1019,7 @@ end)
 
 --assert ---------------------------------------------------------------------
 
-low.assert = macro(function(expr, msg)
+assert = macro(function(expr, msg)
 	if NOASSERTS then return `expr end
 	return quote
 		if not expr then
@@ -1041,12 +1042,12 @@ end, function(v, ...)
 	error(concat(t), 2)
 end)
 
-low.assertf = glue.assert
+assertf = glue.assert
 
 --clock ----------------------------------------------------------------------
 --monotonic clock (can't go back or drift) in seconds with ~1us precision.
 
-local clock
+local tclock
 if Windows then
 	extern('QueryPerformanceFrequency', {&int64} -> int32)
 	extern('QueryPerformanceCounter',   {&int64} -> int32)
@@ -1057,7 +1058,7 @@ if Windows then
 		assert(QueryPerformanceFrequency(&t) ~= 0)
 		inv_qpf = 1.0 / t --precision loss in e-10
 	end
-	clock = terra(): double
+	tclock = terra(): double
 		if inv_qpf == 0 then init() end
 		var t: int64
 		assert(QueryPerformanceCounter(&t) ~= 0)
@@ -1067,18 +1068,18 @@ elseif Linux then
 	--TODO: finish and test this
 	include'time.h'
 	linklibrary'rt'
-	clock = terra(): double
+	tclock = terra(): double
 		var t: timespec
 		assert(clock_gettime(CLOCK_MONOTONIC, &tp) == 0)
 		return t.tv_sec + t.tv_nsec / 1.0e9
 	end
 elseif OSX then
 	--TODO: finish and test this
-	clock = terra(): double
+	tclock = terra(): double
 		return [double](mach_absolute_time())
 	end
 end
-low.clock = macro(function() return `clock() end, terralib.currenttimeinseconds)
+clock = macro(function() return `tclock() end, terralib.currenttimeinseconds)
 
 local t0 = global(double, 0.0)
 local function probe_terra(...)
@@ -1091,23 +1092,23 @@ local function probe_terra(...)
 		t0 = t
 	end
 end
-low.probe = macro(probe_terra, probe_lua)
+probe = macro(probe_terra, probe_lua)
 
 --call a method on each element of an array ----------------------------------
 
 local empty = {}
 local function args(...) return select('#',...) > 0 and {...} or empty end
 
-local function cancall(T, method)
+local function cancall_lua(T, method)
 	return getmethod(T, method) and true or false
 end
-low.cancall = macro(function(t, method)
+cancall = macro(function(t, method)
 	method = method:asvalue()
 	local T = type(t) == 'terratype' and t or t:istype() and t:astype() or t:gettype()
-	return cancall(T, method)
-end, cancall)
+	return cancall_lua(T, method)
+end, cancall_lua)
 
-low.call = macro(function(t, method, len, ...)
+call = macro(function(t, method, len, ...)
 	len = len and len:isliteral() and len:asvalue() or len or 1
 	method = method:asvalue()
 	if cancall(t, method) then
@@ -1139,7 +1140,7 @@ C.free = nil
 C.malloc = nil
 C.calloc = nil
 
-low.alloc = macro(function(T, len, oldp, label)
+alloc = macro(function(T, len, oldp, label)
 	oldp = oldp or `nil
 	len = len or 1
 	label = label or ''
@@ -1158,7 +1159,7 @@ low.alloc = macro(function(T, len, oldp, label)
 	end
 end)
 
-low.realloc = macro(function(p, len, label) --works as free() when len = 0
+realloc = macro(function(p, len, label) --works as free() when len = 0
 	label = label or ''
 	local T = p:getpointertype()
 	return `alloc(T, len, p, label)
@@ -1166,7 +1167,7 @@ end)
 
 --Note the necessity to pass a `len` if freeing an array of objects that have
 --a free() method otherwise only the first element of the array will be freed!
-low.free = macro(function(p, len, nilvalue)
+free = macro(function(p, len, nilvalue)
 	nilvalue = nilvalue or `nil
 	len = len or 1
 	return quote
@@ -1178,7 +1179,7 @@ low.free = macro(function(p, len, nilvalue)
 	end
 end)
 
-low.new = macro(function(T, ...)
+new = macro(function(T, ...)
 	local args = args(...)
 	return quote
 		var obj = alloc(T)
@@ -1191,7 +1192,7 @@ end)
 
 local C_memset = C.memset; C.memset = nil
 
-low.fill = macro(function(p, val, len)
+fill = macro(function(p, val, len)
 	if len == nil then --fill(p, len)
 		val, len = nil, val
 	end
@@ -1209,7 +1210,7 @@ end)
 
 local C_memmove = C.memmove; C.memmove = nil
 
-low.bitcopy = macro(function(dst, src, len)
+bitcopy = macro(function(dst, src, len)
 	len = len or 1
 	local T1 = dst:getpointertype()
 	local T2 = src:getpointertype()
@@ -1218,7 +1219,7 @@ low.bitcopy = macro(function(dst, src, len)
 	return quote C_memmove(dst, src, len * sizeof(T)) in dst end
 end)
 
-low.copy = macro(function(dst, src, len)
+copy = macro(function(dst, src, len)
 	--TODO: check if T1 can be cast to T2 or viceversa and use that instead!
 	return `bitcopy(dst, src, len)
 end)
@@ -1227,7 +1228,7 @@ end)
 
 local C_memcmp = C.memcmp; C.memcmp = nil
 
-low.bitequal = macro(function(p1, p2, len)
+bitequal = macro(function(p1, p2, len)
 	len = len or 1
 	local T1 = p1:getpointertype()
 	local T2 = p2:getpointertype()
@@ -1239,7 +1240,7 @@ end)
 local op_eq = macro(function(a, b) return `@a == @b end)
 local mt_eq = macro(function(a, b) return `a:__eq(b) end)
 
-low.equal = macro(function(p1, p2, len)
+equal = macro(function(p1, p2, len)
 	len = len or 1
 	local T1 = p1:getpointertype()
 	local T2 = p2:getpointertype()
@@ -1273,7 +1274,7 @@ end)
 
 --default hash function ------------------------------------------------------
 
-low.bithash = macro(function(size_t, k, h, len) --FNV-1A hash
+bithash = macro(function(size_t, k, h, len) --FNV-1A hash
 	local size_t = size_t:astype()
 	local T = k:getpointertype()
 	local len = len or 1
@@ -1288,7 +1289,7 @@ low.bithash = macro(function(size_t, k, h, len) --FNV-1A hash
 	end
 end)
 
-low.hash = macro(function(size_t, k, h, len)
+hash = macro(function(size_t, k, h, len)
 	len = len or 1
 	h = h or 0
 	local size_t = size_t:astype()
@@ -1314,7 +1315,7 @@ end)
 
 --sizeof of dynamically allocated memory -------------------------------------
 
-low.memsize = macro(function(t)
+memsize = macro(function(t)
 	if t:istype() then return `sizeof(t) end
 	local T = t:gettype()
 	if getmethod(T, '__memsize') then
@@ -1326,7 +1327,7 @@ end)
 
 --readfile -------------------------------------------------------------------
 
-local terra readfile(name: rawstring): {&opaque, int64}
+local terra treadfile(name: rawstring): {&opaque, int64}
 	var f = fopen(name, 'rb')
 	defer fclose(f)
 	if f ~= nil then
@@ -1344,11 +1345,11 @@ local terra readfile(name: rawstring): {&opaque, int64}
 	end
 	return nil, 0
 end
-low.readfile = macro(function(name) return `readfile(name) end, glue.readfile)
+readfile = macro(function(name) return `treadfile(name) end, glue.readfile)
 
 --freelist -------------------------------------------------------------------
 
-low.freelist = memoize(function(T)
+freelist = memoize(function(T)
 	local struct freelist {
 		next: &freelist;
 	}
@@ -1395,7 +1396,7 @@ end)
 -- * publishing enum and bitmask values.
 -- * diff-friendly deterministic output.
 
-function low.publish(modulename)
+function publish(modulename)
 
 	local self = {}
 	setmetatable(self, self)
@@ -1761,4 +1762,4 @@ ffi.metatype(']]..name..[[', {
 	return self
 end
 
-return low
+return _M

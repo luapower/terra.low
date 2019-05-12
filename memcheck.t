@@ -58,8 +58,8 @@ local terra checkalloc(p: &opaque, oldp: &opaque, len: int64, sz: size_t, elemen
 	end
 end
 
-local rawalloc = low.alloc
-low.alloc = macro(function(T, len, oldp, label)
+local rawalloc = alloc
+alloc = macro(function(T, len, oldp, label)
 	oldp = oldp or `nil
 	len = len or 1
 	label = label or ''
