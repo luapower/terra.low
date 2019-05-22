@@ -1409,7 +1409,7 @@ function publish(modulename)
 			or (type(T) == 'terratype' and T:isstruct() and not T:istuple())
 		then
 			T.opaque = opaque
-			if type(T) == 'terrafunction' then
+			if type(T) == 'terrafunction' or type(T) == 'overloadedterrafunction' then
 				T.ffi_name = public_methods
 			else
 				T.public_methods = public_methods or T.methods
@@ -1602,15 +1602,46 @@ function publish(modulename)
 			end
 		end
 
-		local function publicname(T, fname)
+		local function overloadname(fname, name, i)
+			if type(name) == 'table' and name[i] then return name[i] end
+			return (type(name) == 'string' and name or fname)..(i ~= 1 and i or '')
+		end
+
+		local function publicname(T, fname, i)
 			local name = not T.public_methods or T.public_methods[fname]
-			return type(name) == 'string' and name or (name and fname)
+			return name and overloadname(fname, name, i)
 		end
 
 		local function cdef_methods(T)
-			local function cmp(k1, k2) --declare methods in source code order
-				local d1 = T.methods[k1].definition
-				local d2 = T.methods[k2].definition
+			local name = typename(T)
+			local methods = {}
+			local getters = {}
+			local setters = {}
+
+			--unpack overloads.
+			local m = {}
+			for fname, func in pairs(T.methods) do
+				if type(func) == 'overloadedterrafunction' then
+					for i,func in ipairs(func.definitions) do
+						local name = publicname(T, fname, i)
+						if name then
+							m[name] = func
+						end
+					end
+				elseif type(func) == 'terrafunction' then
+					local name = publicname(T, fname)
+					if name then
+						m[name] = func
+					end
+				end
+			end
+
+			--declare methods in source code order.
+			local function cmp(k1, k2)
+				local m1 = m[k1]
+				local m2 = m[k2]
+				local d1 = m1.definition
+				local d2 = m2.definition
 				assert(d1, 'method '..tostring(T)..':'..k1..' has no body')
 				assert(d2, 'method '..tostring(T)..':'..k2..' has no body')
 				if d1.filename == d2.filename then
@@ -1619,15 +1650,8 @@ function publish(modulename)
 					return d1.filename < d2.filename
 				end
 			end
-			local name = typename(T)
-			local methods = {}
-			local getters = {}
-			local setters = {}
-			local terramethods = glue.map(T.methods, function(k, v)
-				return type(v) == 'terrafunction' and v or nil
-			end)
-			for fname, func in sortedpairs(terramethods, cmp) do
-				local fname = publicname(T, fname)
+
+			for fname, func in sortedpairs(m, cmp) do
 				if fname then
 					local cname = name..'_'..fname
 					cdef_function(func, cname)
@@ -1676,6 +1700,11 @@ ffi.metatype(']]..name..[[', {
 		for i,obj in ipairs(objects) do
 			if type(obj) == 'terrafunction' then
 				cdef_function(obj, obj.ffi_name or obj.name:gsub('%.', '_'))
+			elseif type(obj) == 'overloadedterrafunction' then
+				local name = obj.ffi_name or obj.name:gsub('%.', '_')
+				for i,obj in ipairs(obj.definitions) do
+					cdef_function(obj, type(name) == 'table' and name[i] or overloadname(name, i))
+				end
 			elseif obj:isstruct() then
 				cdef_struct(obj)
 				cdef_methods(obj)
