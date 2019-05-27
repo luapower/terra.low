@@ -81,6 +81,20 @@ terra memreport()
 	pfn('TOTAL: %d bytes.', total)
 end
 
+dp = macro(function(p, sz)
+	sz = sz or 1
+	local T = p:getpointertype()
+	return quote
+		for start, mem in memmap do
+			if [&opaque](p) >= @start and [&opaque](p + sz) <= [&opaque]([&uint8](@start) + mem:size())
+				and strcmp(mem.element_type, [tostring(T)]) == 0
+			then
+				return
+			end
+		end
+		pfn('out-of-heap access for %s<%x> + %d elements', [tostring(T)], p, sz)
+	end
+end)
 
 if not ... then
 
