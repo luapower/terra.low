@@ -204,13 +204,13 @@ autoload  = glue.autoload
 
 canopen   = glue.canopen
 writefile = glue.writefile
-lines     = glue.lines
 
 pack   = glue.pack
 unpack = glue.unpack
 
 string.starts = glue.starts
 string.trim   = glue.trim
+string.lines  = glue.lines
 
 --[[  Terra 1.0.0 std library use (promoted symbols not listed)
 
