@@ -863,28 +863,29 @@ noop = macro(function() return quote end end, glue.noop)
 
 --NOTE: we need to open new handles for these since Terra can't see the C
 --global ones from stdio.h
-
-local _stdin  = global(&_iobuf, nil)
-local _stdout = global(&_iobuf, nil)
-local _stderr = global(&_iobuf, nil)
-local fdopen = Windows and _fdopen or fdopen
-
---exposed as macros so that they can be opened on demand on the first call.
-stdin = macro(function()
-	return quote
-		if _stdin == nil then _stdin = fdopen(0, 'r') end in _stdin
-	end
-end)
-stdout = macro(function()
-	return quote
-		if _stdout == nil then _stdout = fdopen(1, 'w') end in _stdout
-	end
-end)
-stderr = macro(function()
-	return quote
-		if _stderr == nil then _stderr = fdopen(2, 'w') end in _stderr
-	end
-end)
+do
+	local fdopen = Windows and _fdopen or fdopen
+	local iobuf = Windows and _iobuf or iobuf
+	local _stdin  = global(&iobuf, nil)
+	local _stdout = global(&iobuf, nil)
+	local _stderr = global(&iobuf, nil)
+	--exposed as macros so that they can be opened on demand on the first call.
+	stdin = macro(function()
+		return quote
+			if _stdin == nil then _stdin = fdopen(0, 'r') end in _stdin
+		end
+	end)
+	stdout = macro(function()
+		return quote
+			if _stdout == nil then _stdout = fdopen(1, 'w') end in _stdout
+		end
+	end)
+	stderr = macro(function()
+		return quote
+			if _stderr == nil then _stderr = fdopen(2, 'w') end in _stderr
+		end
+	end)
+end
 
 --tostring -------------------------------------------------------------------
 
