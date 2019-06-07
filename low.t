@@ -686,7 +686,7 @@ local load_cdefs = memoize(function(m)
 	return t
 end)
 function require_h(...)
-	local t = {builtin_ctypes}
+	local t = {}
 	for i=1,select('#',...) do
 		local m = select(i,...)
 		if type(m) == 'table' then
@@ -695,7 +695,9 @@ function require_h(...)
 			extend(t, load_cdefs(m))
 		end
 	end
-	C(concat(t), {'-Wno-missing-declarations'})
+	local s = concat(t)
+	C(builtin_ctypes..s, {'-Wno-missing-declarations'})
+	ffi.cdef(s)
 	--^^enums are anonymized in some headers because they are boxed in
 	--LuaJIT, but Clang complains about that hence -Wno-missing-declarations.
 end
@@ -861,30 +863,17 @@ noop = macro(function() return quote end end, glue.noop)
 
 --stdin/out/err --------------------------------------------------------------
 
---NOTE: we need to open new handles for these since Terra can't see the C
---global ones from stdio.h
-do
-	local fdopen = Windows and _fdopen or fdopen
-	local iobuf = Windows and _iobuf or iobuf
-	local _stdin  = global(&iobuf, nil)
-	local _stdout = global(&iobuf, nil)
-	local _stderr = global(&iobuf, nil)
-	--exposed as macros so that they can be opened on demand on the first call.
-	stdin = macro(function()
-		return quote
-			if _stdin == nil then _stdin = fdopen(0, 'r') end in _stdin
-		end
-	end)
-	stdout = macro(function()
-		return quote
-			if _stdout == nil then _stdout = fdopen(1, 'w') end in _stdout
-		end
-	end)
-	stderr = macro(function()
-		return quote
-			if _stderr == nil then _stderr = fdopen(2, 'w') end in _stderr
-		end
-	end)
+if Windows then
+	stdin  = terra() return C.__iob_func()+0 end
+	stdout = terra() return C.__iob_func()+1 end
+	stderr = terra() return C.__iob_func()+2 end
+else
+	C[[
+	#include <stdio.h>
+	FILE* stdin  (void) { return stdin;  }
+	FILE* stdout (void) { return stdout; }
+	FILE* stderr (void) { return stderr; }
+	]]
 end
 
 --tostring -------------------------------------------------------------------
