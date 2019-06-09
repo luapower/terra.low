@@ -607,32 +607,15 @@ end
 
 --C include system -----------------------------------------------------------
 
-local platos = {Windows = 'mingw', Linux = 'linux', OSX = 'osx'}
-platform = platos[ffi.os]..'64'
-
-path_vars = {L = '.', P = platform}
-local function P(s) return s:gsub('$(%a)', path_vars) end
-
---add luapower's standard paths relative to the current directory.
-package.path = package.path .. P'$L/bin/$P/lua/?.lua;$L/?.lua;$L/?/init.lua'
-package.cpath = package.cpath .. P';$L/bin/mingw64/clib/?.dll'
-package.terrapath = package.terrapath .. P'$L/?.t;$L/?/init.t'
-
-includec_loaders = {} --{name -> loader(header_name)}
+path_vars = {I = terralib.terrahome..'/../../csrc'}
+local function expand(s) return s:gsub('$(%a)', path_vars) end
 
 function includepath(path)
-	terralib.includepath = terralib.includepath .. P(';'..path)
+	terralib.includepath = terralib.includepath .. ';' .. expand(path)
 end
 
 --overriding this built-in so that modules can depend on it being memoized.
-local terralib_includec = terralib.includec
-terralib.includec = memoize(function(header, ...)
-	for _,loader in pairs(includec_loaders) do
-		local C = loader(header, ...)
-		if C then return C end
-	end
-	return terralib_includec(header, ...)
-end)
+terralib.includec = memoize(terralib.includec)
 
 --terralib.includec variant that dumps symbols into C.
 function include(header,...)
@@ -1727,7 +1710,7 @@ ffi.metatype(']]..name..[[', {
 	end
 
 	function self:binpath(filename)
-		return 'bin/'..platform..(filename and '/'..filename or '')
+		return terralib.terrahome..(filename and '/'..filename or '')
 	end
 
 	function self:objfile()
