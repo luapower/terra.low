@@ -2,9 +2,9 @@
 --Lua+Terra standard library & flat vocabulary of tools.
 --Written by Cosmin Apreutesei. Public domain.
 
---Intended to be used as global environment: setfenv(1, require'low').
+--Intended to be used as global environment: setfenv(1, require'terra/low').
 
-if not ... then require'low_test'; return; end
+if not ... then require'terra/low_test'; return; end
 
 --dependencies ---------------------------------------------------------------
 
@@ -31,12 +31,12 @@ glue = require'glue'
 pp   = require'pp'
 
 glue.autoload(_M, {
-	arrview    = 'arrayview',
-	arr        = 'dynarray',
-	map        = 'khash',
-	set        = 'khash',
-	random     = 'random',
-	randomseed = 'random',
+	arrview    = 'terra/arrayview',
+	arr        = 'terra/dynarray',
+	map        = 'terra/khash',
+	set        = 'terra/khash',
+	random     = 'terra/random',
+	randomseed = 'terra/random',
 })
 
 require = function(mod)
