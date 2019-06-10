@@ -607,11 +607,8 @@ end
 
 --C include system -----------------------------------------------------------
 
-path_vars = {I = terralib.terrahome..'/../../csrc'}
-local function expand(s) return s:gsub('$(%a)', path_vars) end
-
 function includepath(path)
-	terralib.includepath = terralib.includepath .. ';' .. expand(path)
+	terralib.includepath = terralib.includepath .. ';' .. path
 end
 
 --overriding this built-in so that modules can depend on it being memoized.
@@ -1702,15 +1699,19 @@ ffi.metatype(']]..name..[[', {
 
 	end
 
-	function self:savebinding()
+	function self:savebinding(filename)
 		zone'savebinding'
-		local filename = modulename .. '_h.lua'
+		local filename = self:luapath(filename or modulename .. '_h.lua')
 		writefile(filename, self:bindingcode(), nil, filename..'.tmp')
 		zone()
 	end
 
 	function self:binpath(filename)
 		return terralib.terrahome..(filename and '/'..filename or '')
+	end
+
+	function self:luapath(filename)
+		return terralib.terrahome..'/../..'..(filename and '/'..filename or '')
 	end
 
 	function self:objfile()
