@@ -33,8 +33,8 @@ pp   = require'pp'
 glue.autoload(_M, {
 	arrview    = 'terra/arrayview',
 	arr        = 'terra/dynarray',
-	map        = 'terra/khash',
-	set        = 'terra/khash',
+	map        = 'terra/hashmap',
+	set        = 'terra/hashmap',
 	random     = 'terra/random',
 	randomseed = 'terra/random',
 })
@@ -677,7 +677,7 @@ function require_h(...)
 	end
 	local s = concat(t)
 	C(builtin_ctypes..s, {'-Wno-missing-declarations'})
-	ffi.cdef(s)
+	--ffi.cdef(s)
 	--^^enums are anonymized in some headers because they are boxed in
 	--LuaJIT, but Clang complains about that hence -Wno-missing-declarations.
 end
