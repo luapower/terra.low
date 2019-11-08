@@ -746,10 +746,14 @@ typedef int64_t __int64;
 ]]
 local load_cdefs = memoize(function(m)
 	local cdef = ffi.cdef
+	local metatype = ffi.metatype
 	local t = {}
 	ffi.cdef = function(s) add(t, s) end
+	ffi.metatype = noop
 	require(m)
+	package.loaded[m] = nil
 	ffi.cdef = cdef
+	ffi.metatype = metatype
 	return t
 end)
 function require_h(...)
@@ -764,9 +768,9 @@ function require_h(...)
 	end
 	local s = concat(t)
 	C(builtin_ctypes..s, {'-Wno-missing-declarations'})
-	--ffi.cdef(s)
 	--^^enums are anonymized in some headers because they are boxed in
 	--LuaJIT, but Clang complains about that hence -Wno-missing-declarations.
+	--ffi.cdef(s) --let Terra do the cdefs through its own type system.
 end
 
 --clib dependencies ----------------------------------------------------------
