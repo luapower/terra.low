@@ -1230,7 +1230,12 @@ if Windows then
 		return t * inv_qpf
 	end
 elseif Linux then
-	include'time.h'
+	local struct timespec {
+		tv_sec  : long;
+		tv_nsec : long;
+	}
+	extern('clock_gettime', {uint, &timespec} -> int)
+	local CLOCK_MONOTONIC = 1
 	tclock = terra(): double
 		var t: timespec
 		assert(clock_gettime(CLOCK_MONOTONIC, &t) == 0)
