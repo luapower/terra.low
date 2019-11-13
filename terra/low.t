@@ -1242,9 +1242,9 @@ elseif Linux then
 		return t.tv_sec + t.tv_nsec / 1.0e9
 	end
 elseif OSX then
-	--TODO: finish and test this
+	extern('mach_absolute_time', {} -> uint64)
 	tclock = terra(): double
-		return [double](mach_absolute_time())
+		return [double](mach_absolute_time()) * 1e-9
 	end
 end
 clock = macro(function() return `tclock() end, terralib.currenttimeinseconds)
