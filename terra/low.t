@@ -837,9 +837,9 @@ struct _iobuf {
 typedef struct _iobuf FILE ;
 
 FILE* __iob_func();
-FILE* stdin  (void) { return &__iob_func()[0]; }
-FILE* stdout (void) { return &__iob_func()[1]; }
-FILE* stderr (void) { return &__iob_func()[2]; }
+FILE* get_stdin  (void) { return &__iob_func()[0]; }
+FILE* get_stdout (void) { return &__iob_func()[1]; }
+FILE* get_stderr (void) { return &__iob_func()[2]; }
 ]] .. common_cdef)
 else
 C([[
@@ -847,10 +847,21 @@ typedef unsigned long int size_t;
 
 int    snprintf (char*, size_t, const char*, ...);
 
-// TODO: stdio...
+typedef struct FILE FILE;
 
+extern FILE* stdin;
+extern FILE* stdout;
+extern FILE* stderr;
+
+FILE* get_stdin  (void) { return stdin; }
+FILE* get_stdout (void) { return stdout; }
+FILE* get_stderr (void) { return stderr; }
 ]] .. common_cdef)
 end
+
+stdin  = get_stdin
+stdout = get_stdout
+stderr = get_stderr
 
 --math module ----------------------------------------------------------------
 
@@ -1219,12 +1230,10 @@ if Windows then
 		return t * inv_qpf
 	end
 elseif Linux then
-	--TODO: finish and test this
 	include'time.h'
-	linklibrary'rt'
 	tclock = terra(): double
 		var t: timespec
-		assert(clock_gettime(CLOCK_MONOTONIC, &tp) == 0)
+		assert(clock_gettime(CLOCK_MONOTONIC, &t) == 0)
 		return t.tv_sec + t.tv_nsec / 1.0e9
 	end
 elseif OSX then
